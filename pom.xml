@@ -6,7 +6,7 @@
   <version>0.0.3</version>
   <packaging>jar</packaging>
   <name>stan-cn-com</name>
-  <description>An API wrapper based on Stanford Core NLP package for Simplified Chinese users</description>
+  <description>The shared code of an API wrapper based on Stanford Core NLP package for Simplified Chinese users</description>
   <url>https://github.com/guokr/stan-cn-com</url>
   <licenses>
     <license>
@@ -124,32 +124,6 @@
             <forkMode>once</forkMode>
             <argLine>-Xms2g -Xmx2g</argLine>
         </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-shade-plugin</artifactId>
-        <version>2.0</version>
-        <executions>
-          <execution>
-            <phase>package</phase>
-            <goals>
-              <goal>shade</goal>
-            </goals>
-            <configuration>
-              <createDependencyReducedPom>false</createDependencyReducedPom>
-              <createSourcesJar>true</createSourcesJar>
-              <finalName>stan-cn-com-${project.version}-standalone</finalName>
-              <transformers>
-                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <manifestEntries>
-                    <Main-Class>com.guokr.nlp.GkNlpCli</Main-Class>
-                    <Build-Number>1</Build-Number>
-                  </manifestEntries>
-                </transformer>
-              </transformers>
-            </configuration>
-          </execution>
-        </executions>
       </plugin>
     </plugins>
   </build>

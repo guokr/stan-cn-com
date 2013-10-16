@@ -5,7 +5,7 @@ stan-cn-* package family is packages based on Stanford NLP packages for the
 convenience of Chinese users. This package is a common base for stan-cn-*
 package family.
 
-stan-cn-* package family is include:
+stan-cn-* package family is including:
 
 * stan-cn-com: common code base
 * stan-cn-seg: Chinese segmentation
@@ -24,5 +24,5 @@ Before release this package to maven central, please execute below commands:
 License
 --------
 
-GPLv2, just as Stanford CoreNLP package
+GPLv2, just the same as the license of Stanford CoreNLP package
 
