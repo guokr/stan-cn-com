@@ -68,21 +68,21 @@ class TsurgeonParser/*@bgen(jjtree)*/implements TsurgeonParserTreeConstants, Tsu
   TreeLocation loc = null;
   Token operator;
   AuxiliaryTree tree = null;
-  List nodeSelections = null;
+  List<TsurgeonPattern> nodeSelections = null;
   Token regex;
   Token hash_int;
     try {
       switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
       case DELETE:
         operator = jj_consume_token(DELETE);
-        nodeSelections = NodeSelectionList(new ArrayList());
+        nodeSelections = NodeSelectionList(new ArrayList<TsurgeonPattern>());
       jjtree.closeNodeScope(jjtn000, true);
       jjtc000 = false;
       {if (true) return new DeleteNode(nodeSelections);}
         break;
       case PRUNE:
         operator = jj_consume_token(PRUNE);
-        nodeSelections = NodeSelectionList(new ArrayList());
+        nodeSelections = NodeSelectionList(new ArrayList<TsurgeonPattern>());
       jjtree.closeNodeScope(jjtn000, true);
       jjtc000 = false;
       {if (true) return new PruneNode(nodeSelections);}
@@ -193,10 +193,10 @@ class TsurgeonParser/*@bgen(jjtree)*/implements TsurgeonParserTreeConstants, Tsu
                 break;
               case COINDEX:
                 operator = jj_consume_token(COINDEX);
-                nodeSelections = NodeSelectionList(new ArrayList());
+                nodeSelections = NodeSelectionList(new ArrayList<TsurgeonPattern>());
       jjtree.closeNodeScope(jjtn000, true);
       jjtc000 = false;
-      {if (true) return new CoindexNodes((TsurgeonPattern[]) nodeSelections.toArray(new TsurgeonPattern[] {}));}
+      {if (true) return new CoindexNodes(nodeSelections.toArray(new TsurgeonPattern[] {}));}
                 break;
               default:
                 jj_la1[2] = jj_gen;
@@ -263,7 +263,7 @@ class TsurgeonParser/*@bgen(jjtree)*/implements TsurgeonParserTreeConstants, Tsu
     throw new Error("Missing return statement in function");
   }
 
-  final public List NodeSelectionList(List l) throws ParseException {
+  final public List<TsurgeonPattern> NodeSelectionList(List<TsurgeonPattern> l) throws ParseException {
  /*@bgen(jjtree) NodeSelectionList */
   SimpleNode jjtn000 = new SimpleNode(JJTNODESELECTIONLIST);
   boolean jjtc000 = true;
@@ -398,12 +398,12 @@ class TsurgeonParser/*@bgen(jjtree)*/implements TsurgeonParserTreeConstants, Tsu
  SimpleNode jjtn000 = new SimpleNode(JJTTREENODE);
  boolean jjtc000 = true;
  jjtree.openNodeScope(jjtn000);Token label;
- List dtrs = null;
+ List<Tree> dtrs = null;
     try {
       switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
       case TREE_NODE_NONTERMINAL_LABEL:
         label = jj_consume_token(TREE_NODE_NONTERMINAL_LABEL);
-        dtrs = TreeDtrs(new ArrayList());
+        dtrs = TreeDtrs(new ArrayList<Tree>());
       jjtree.closeNodeScope(jjtn000, true);
       jjtc000 = false;
       {if (true) return treeFactory.newTreeNode(label.image.substring(1),dtrs);}
@@ -424,7 +424,7 @@ class TsurgeonParser/*@bgen(jjtree)*/implements TsurgeonParserTreeConstants, Tsu
         }
       jjtree.closeNodeScope(jjtn000, true);
       jjtc000 = false;
-      {if (true) return treeFactory.newTreeNode(label.image,new ArrayList());}
+      {if (true) return treeFactory.newTreeNode(label.image,new ArrayList<Tree>());}
         break;
       default:
         jj_la1[5] = jj_gen;
@@ -453,7 +453,7 @@ class TsurgeonParser/*@bgen(jjtree)*/implements TsurgeonParserTreeConstants, Tsu
     throw new Error("Missing return statement in function");
   }
 
-  final public List TreeDtrs(List dtrs) throws ParseException {
+  final public List<Tree> TreeDtrs(List<Tree> dtrs) throws ParseException {
  /*@bgen(jjtree) TreeDtrs */
   SimpleNode jjtn000 = new SimpleNode(JJTTREEDTRS);
   boolean jjtc000 = true;

@@ -5,13 +5,14 @@ import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 
 import edu.stanford.nlp.math.ArrayMath;
 import edu.stanford.nlp.math.SloppyMath;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.MapFactory;
 import edu.stanford.nlp.util.MutableDouble;
 import edu.stanford.nlp.util.Pair;
@@ -28,7 +29,6 @@ public class TwoDimensionalCounter<K1, K2> implements TwoDimensionalCounterInter
   private static final long serialVersionUID = 1L;
 
   // the outermost Map
-  @SuppressWarnings( { "NonSerializableFieldInSerializableClass" })
   private Map<K1, ClassicCounter<K2>> map;
 
   // the total of all counts
@@ -92,6 +92,13 @@ public class TwoDimensionalCounter<K1, K2> implements TwoDimensionalCounterInter
       result += c.size();
     }
     return result;
+  }
+  
+  /**
+   * @return size of the outer map
+   */
+  public int sizeOuterMap(){
+    return map.size();
   }
 
   public boolean containsKey(K1 o1, K2 o2) {
@@ -284,7 +291,7 @@ public class TwoDimensionalCounter<K1, K2> implements TwoDimensionalCounterInter
   }
 
   public Set<K2> secondKeySet() {
-    Set<K2> result = new HashSet<K2>();
+    Set<K2> result = Generics.newHashSet();
     for (K1 k1 : firstKeySet()) {
       for (K2 k2 : getCounter(k1).keySet()) {
         result.add(k2);
@@ -356,7 +363,7 @@ public class TwoDimensionalCounter<K1, K2> implements TwoDimensionalCounterInter
   }
 
   public void removeZeroCounts() {
-    Set<K1> firstKeySet = new HashSet<K1>(firstKeySet());
+    Set<K1> firstKeySet = Generics.newHashSet(firstKeySet());
     for (K1 k1 : firstKeySet) {
       ClassicCounter<K2> c = getCounter(k1);
       Counters.retainNonZeros(c);
@@ -374,9 +381,9 @@ public class TwoDimensionalCounter<K1, K2> implements TwoDimensionalCounterInter
   }
 
   public void clean() {
-    for (K1 key1 : new HashSet<K1>(map.keySet())) {
+    for (K1 key1 : Generics.newHashSet(map.keySet())) {
       ClassicCounter<K2> c = map.get(key1);
-      for (K2 key2 : new HashSet<K2>(c.keySet())) {
+      for (K2 key2 : Generics.newHashSet(c.keySet())) {
         if (SloppyMath.isCloseTo(0.0, c.getCount(key2))) {
           c.remove(key2);
         }
@@ -407,6 +414,13 @@ public class TwoDimensionalCounter<K1, K2> implements TwoDimensionalCounterInter
     total = 0.0;
   }
 
+  public void recomputeTotal(){
+    total = 0;
+    for(Entry<K1, ClassicCounter<K2>> c: map.entrySet()){
+      total += c.getValue().totalCount();
+    }
+  }
+  
   public static void main(String[] args) {
     TwoDimensionalCounter<String, String> cc = new TwoDimensionalCounter<String, String>();
     cc.setCount("a", "c", 1.0);

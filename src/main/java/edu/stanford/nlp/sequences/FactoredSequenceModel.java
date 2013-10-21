@@ -1,6 +1,10 @@
 package edu.stanford.nlp.sequences;
 
 import edu.stanford.nlp.math.ArrayMath;
+import edu.stanford.nlp.ie.BisequenceEmpiricalNERPrior;
+
+import java.util.Arrays;
+
 
 /**
  * @author grenager
@@ -17,6 +21,7 @@ public class FactoredSequenceModel implements SequenceModel {
   
   SequenceModel[] models = null;
   double[] wts = null; 
+
   /**
    * Computes the distribution over values of the element at position pos in the sequence,
    * conditioned on the values of the elements in all other positions of the provided sequence.
@@ -28,9 +33,33 @@ public class FactoredSequenceModel implements SequenceModel {
   public double[] scoresOf(int[] sequence, int pos) {
     if(models != null){
       double[] dist = ArrayMath.multiply(models[0].scoresOf(sequence, pos),wts[0]);
+      if (BisequenceEmpiricalNERPrior.DEBUG) {
+        if (BisequenceEmpiricalNERPrior.debugIndices.indexOf(pos) != -1) { 
+          double[] distDebug = Arrays.copyOf(dist, dist.length);
+          ArrayMath.logNormalize(distDebug);
+          ArrayMath.expInPlace(distDebug);
+          System.err.println("pos: " + pos);
+          System.err.println("model 0:");
+          for (int j = 0; j < distDebug.length; j++)
+            System.err.println("\t" + distDebug[j]);
+          System.err.println();
+        }
+      }
       for(int i = 1; i < models.length; i++){
         double[] dist_i = models[i].scoresOf(sequence, pos);
         ArrayMath.addMultInPlace(dist,dist_i,wts[i]);
+
+        if (BisequenceEmpiricalNERPrior.DEBUG) {
+          if (BisequenceEmpiricalNERPrior.debugIndices.indexOf(pos) != -1) { 
+            System.err.println("model " + i + ":");
+            double[] distDebug = Arrays.copyOf(dist_i, dist.length);
+            ArrayMath.logNormalize(distDebug);
+            ArrayMath.expInPlace(distDebug);
+            for (int j = 0; j < distDebug.length; j++)
+              System.err.println("\t" + distDebug[j]);
+            System.err.println();
+          }
+        }
       }
       return dist;
     }
@@ -41,17 +70,6 @@ public class FactoredSequenceModel implements SequenceModel {
     double[] dist = new double[dist1.length];
     for(int i = 0; i < dist1.length; i++)
       dist[i] = model1Wt*dist1[i] + model2Wt*dist2[i];
-      //dist[i] = dist1[i];
-    //double[] dist = ArrayMath.pairwiseAdd(dist1, dist2);
-
-//     if (pos > 0 && pos < sequence.length - 1) {
-//       System.err.println("position: "+pos+" ["+sequence[pos-1]+","+sequence[pos]+","+sequence[pos+1]+"]");
-//       System.err.println(java.util.Arrays.toString(sequence));
-//       for (int i = 0; i < dist.length; i++) {
-//         System.err.println(i+": "+dist1[i]+" "+dist2[i]+" "+dist[i]);
-//       }
-//       System.err.println();
-//     }
 
     return dist;
   }

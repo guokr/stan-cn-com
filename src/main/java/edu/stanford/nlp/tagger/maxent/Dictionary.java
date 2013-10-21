@@ -6,12 +6,13 @@
  */
 package edu.stanford.nlp.tagger.maxent;
 
-import edu.stanford.nlp.io.InDataStreamFile;
-import edu.stanford.nlp.io.OutDataStreamFile;
+import edu.stanford.nlp.io.IOUtils;
+import edu.stanford.nlp.stats.IntCounter;
+import edu.stanford.nlp.util.Generics;
 
 import java.io.IOException;
 import java.io.DataInputStream;
-import java.util.HashMap;
+import java.io.DataOutputStream;
 import java.util.Map;
 
 
@@ -22,23 +23,19 @@ import java.util.Map;
  */
 public class Dictionary {
 
-  private final HashMap<String,TagCount> dict = new HashMap<String,TagCount>();
-  private final HashMap<Integer,CountWrapper> partTakingVerbs = new HashMap<Integer,CountWrapper>();
+  private final Map<String,TagCount> dict = Generics.newHashMap();
+  private final Map<Integer,CountWrapper> partTakingVerbs = Generics.newHashMap();
   private static final String naWord = "NA";
   private static final boolean VERBOSE = false;
 
   public Dictionary() {
   }
 
-  protected void add(String word, String tag) {
-    if (dict.containsKey(word)) {
-      TagCount cT = dict.get(word);
-      cT.add(tag);
-      return;
+  void fillWordTagCounts(Map<String, IntCounter<String>> wordTagCounts) {
+    for (String word : wordTagCounts.keySet()) {
+      TagCount count = new TagCount(wordTagCounts.get(word));
+      dict.put(word, count);
     }
-    TagCount cT = new TagCount();
-    cT.add(tag);
-    dict.put(word, cT);
   }
 
   /*
@@ -120,21 +117,21 @@ public class Dictionary {
 
 
   protected int getCount(String word, String tag) {
-    TagCount tc = dict.get(word);
-    if (tc == null) {
+    TagCount count = dict.get(word);
+    if (count == null) {
       return 0;
     } else {
-      return tc.get(tag);
+      return count.get(tag);
     }
   }
 
 
   protected String[] getTags(String word) {
-    TagCount tC = get(word);
-    if (tC == null) {
+    TagCount count = get(word);
+    if (count == null) {
       return null;
     }
-    return tC.getTags();
+    return count.getTags();
   }
 
 
@@ -144,16 +141,18 @@ public class Dictionary {
 
 
   String getFirstTag(String word) {
-    if (dict.containsKey(word)) {
-      return dict.get(word).getFirstTag();
+    TagCount count = dict.get(word);
+    if (count != null) {
+      return count.getFirstTag();
     }
     return null;
   }
 
 
   protected int sum(String word) {
-    if (dict.containsKey(word)) {
-      return dict.get(word).sum();
+    TagCount count = dict.get(word);
+    if (count != null) {
+      return count.sum();
     }
     return 0;
   }
@@ -166,7 +165,7 @@ public class Dictionary {
   /*
   public void save(String filename) {
     try {
-      OutDataStreamFile rf = new OutDataStreamFile(filename);
+      DataOutputStream rf = IOUtils.getDataOutputStream(filename);
       save(rf);
       rf.close();
     } catch (Exception e) {
@@ -175,15 +174,15 @@ public class Dictionary {
   }
   */
 
-  void save(OutDataStreamFile file) {
+  void save(DataOutputStream file) {
     String[] arr = dict.keySet().toArray(new String[dict.keySet().size()]);
     try {
       file.writeInt(arr.length);
       System.err.println("Saving dictionary of " + arr.length + " words ...");
       for (String word : arr) {
-        TagCount tC = get(word);
+        TagCount count = get(word);
         file.writeUTF(word);
-        tC.save(file);
+        count.save(file);
       }
       Integer[] arrverbs = this.partTakingVerbs.keySet().toArray(new Integer[partTakingVerbs.keySet().size()]);
       file.writeInt(arrverbs.length);
@@ -208,15 +207,14 @@ public class Dictionary {
 
     for (int i = 0; i < len; i++) {
       String word = rf.readUTF();
-      TagCount tC = new TagCount();
-      tC.read(rf);
-      int numTags = tC.numTags();
+      TagCount count = TagCount.readTagCount(rf);
+      int numTags = count.numTags();
       if (numTags > maxNumTags) {
         maxNumTags = numTags;
       }
-      this.dict.put(word, tC);
+      this.dict.put(word, count);
       if (VERBOSE) {
-        System.err.println("  " + word + " [idx=" + i + "]: " + tC);
+        System.err.println("  " + word + " [idx=" + i + "]: " + count);
       }
     }
     if (VERBOSE) {
@@ -235,15 +233,14 @@ public class Dictionary {
 
     for (int i = 0; i < len; i++) {
       String word = rf.readUTF();
-      TagCount tC = new TagCount();
-      tC.read(rf);
-      int numTags = tC.numTags();
+      TagCount count = TagCount.readTagCount(rf);
+      int numTags = count.numTags();
       if (numTags > maxNumTags) {
         maxNumTags = numTags;
       }
-      this.dict.put(word, tC);
+      this.dict.put(word, count);
       if (VERBOSE) {
-        System.err.println("  " + word + " [idx=" + i + "]: " + tC);
+        System.err.println("  " + word + " [idx=" + i + "]: " + count);
       }
     }
     if (VERBOSE) {
@@ -253,7 +250,7 @@ public class Dictionary {
 
   protected void read(String filename) {
     try {
-      InDataStreamFile rf = new InDataStreamFile(filename);
+      DataInputStream rf = IOUtils.getDataInputStream(filename);
       read(rf, filename);
 
       int len1 = rf.readInt();
@@ -298,8 +295,8 @@ public class Dictionary {
         if (word.indexOf('|') == -1) {
           continue;
         }
-        TagCount tC = get(word);
-        if (tC.numTags() > 1) {
+        TagCount count = get(word);
+        if (count.numTags() > 1) {
           System.out.print(word);
           countAmbiguous++;
           tC.print();
@@ -331,9 +328,9 @@ public class Dictionary {
   protected void setAmbClasses(AmbiguityClasses ambClasses, int veryCommonWordThresh, TTags ttags) {
     for (Map.Entry<String,TagCount> entry : dict.entrySet()) {
       String w = entry.getKey();
-      TagCount tc = entry.getValue();
+      TagCount count = entry.getValue();
       int ambClassId = ambClasses.getClass(w, this, veryCommonWordThresh, ttags);
-      tc.setAmbClassId(ambClassId);
+      count.setAmbClassId(ambClassId);
     }
   }
 

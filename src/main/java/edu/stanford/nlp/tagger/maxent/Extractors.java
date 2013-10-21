@@ -11,9 +11,10 @@ package edu.stanford.nlp.tagger.maxent;
 import java.io.FileInputStream;
 import java.io.ObjectInputStream;
 import java.io.Serializable;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
+import edu.stanford.nlp.util.Pair;
 
 /** Maintains a set of feature extractors and applies them.
  *
@@ -26,8 +27,7 @@ public class Extractors implements Serializable {
 
   private static final boolean DEBUG = false;
 
-  // todo [cdm]: These aren't actually used as Maps. Would a List<Pair<Integer,Extractor>> be faster?
-  volatile Map<Integer,Extractor>
+  transient List<Pair<Integer,Extractor>>
     local, // extractors only looking at current word
     localContext, // extractors only looking at words, except those in "local"
     dynamic; // extractors depending on class labels
@@ -50,21 +50,21 @@ public class Extractors implements Serializable {
    */
   void initTypes() {
 
-    local = new HashMap<Integer,Extractor>();
-    localContext = new HashMap<Integer,Extractor>();
-    dynamic = new HashMap<Integer,Extractor>();
+    local = new ArrayList<Pair<Integer,Extractor>>();
+    localContext = new ArrayList<Pair<Integer,Extractor>>();
+    dynamic = new ArrayList<Pair<Integer,Extractor>>();
 
     for(int i=0; i<v.length; ++i) {
       Extractor e = v[i];
       if(e.isLocal() && e.isDynamic())
         throw new RuntimeException("Extractors can't both be local and dynamic!");
       if(e.isLocal()) {
-        local.put(i,e);
+        local.add(Pair.makePair(i,e));
         //localContext.put(i,e);
       } else if(e.isDynamic()) {
-        dynamic.put(i,e);
+        dynamic.add(Pair.makePair(i,e));
       } else {
-        localContext.put(i,e);
+        localContext.add(Pair.makePair(i,e));
       }
     }
     if(DEBUG) {
@@ -143,7 +143,7 @@ public class Extractors implements Serializable {
   /*
   public void save(String filename) {
     try {
-      OutDataStreamFile rf = new OutDataStreamFile(filename);
+      DataOutputStream rf = IOUtils.getDataOutputStream(filename);
       rf.writeInt(v.length);
       for (Extractor extr : v) {
         rf.writeBytes(extr.toString());

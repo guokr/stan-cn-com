@@ -1,22 +1,16 @@
 package edu.stanford.nlp.tagger.maxent;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 import edu.stanford.nlp.io.PrintFile;
 import edu.stanford.nlp.ling.TaggedWord;
-import edu.stanford.nlp.tagger.common.TaggerConstants;
 import edu.stanford.nlp.tagger.io.TaggedFileRecord;
-
+import edu.stanford.nlp.util.concurrent.MulticoreWrapper;
+import edu.stanford.nlp.util.concurrent.ThreadsafeProcessor;
 
 /** Tags data and can handle either data with gold-standard tags (computing
  *  performance statistics) or unlabeled data.
- *  (The Constructor actually runs the tagger. The main entry points are the
- *  static methods at the bottom of the class.)
- *
- *  Also can train data using the saveModel method.  This class is really the entry
- *  point to all tagger operations, it seems.
  *
  *  @author Kristina Toutanova
  *  @version 1.0
@@ -35,54 +29,41 @@ public class TestClassifier {
   private int numCorrectSentences;
   private int numSentences;
 
-  // TODO: only one boolean here instead of 3?
+  // TODO: only one boolean here instead of 3?  They all use the same
+  // debug status
   private boolean writeUnknDict;
   private boolean writeWords;
   private boolean writeTopWords;
 
-  private Dictionary wrongWords = new Dictionary();
-  // Dictionary unknownWordsDict = new Dictionary();
+  MaxentTagger maxentTagger;
+  TaggerConfig config;
+  String saveRoot;
 
-  public TestClassifier(TaggerConfig config,
-                        MaxentTagger maxentTagger) throws IOException {
+  public TestClassifier(MaxentTagger maxentTagger) throws IOException {
+    this(maxentTagger, maxentTagger.config.getFile());
+  }
+
+  public TestClassifier(MaxentTagger maxentTagger, String testFile) throws IOException {
+    this.maxentTagger = maxentTagger;
+    this.config = maxentTagger.config;
     setDebug(config.getDebug());
 
-    fileRecord = TaggedFileRecord.createRecord(config, config.getFile());
+    fileRecord = TaggedFileRecord.createRecord(config, testFile);
 
-    String dPrefix = config.getDebugPrefix();
-    if (dPrefix == null || dPrefix.equals("")) {
-      dPrefix = fileRecord.filename();
+    saveRoot = config.getDebugPrefix();
+    if (saveRoot == null || saveRoot.equals("")) {
+      saveRoot = fileRecord.filename();
     }
-    test(config, dPrefix, maxentTagger);
+
+    test();
   }
 
-  /**
-   * Adds the EOS marker to both a list of words and a list of tags.
-   */
-  private static void appendSentenceEnd(List<String> words, List<String> tags) {
-    //the sentence is read already, add eos
-    words.add(TaggerConstants.EOS_WORD);
-    tags.add(TaggerConstants.EOS_TAG);
-  }
-
-  private void testOneSentence(List<String> sentence, List<String> tagsArr,
-                               PrintFile wordsFile, PrintFile unknDictFile,
-                               PrintFile topWordsFile, boolean verboseResults,
-                               MaxentTagger maxentTagger) {
+  private void processResults(TestSentence testS,
+                              PrintFile wordsFile, PrintFile unknDictFile,
+                              PrintFile topWordsFile, boolean verboseResults) {
     numSentences++;
 
-    int len = sentence.size();
-    String[] testSent = new String[len];
-    String[] correctTags = new String[len];
-    for (int i = 0; i < len; i++) {
-      testSent[i] = sentence.get(i);
-      correctTags[i] = tagsArr.get(i);
-    }
-
-    TestSentence testS = new TestSentence(maxentTagger,
-                                          testSent, correctTags,
-                                          wordsFile, wrongWords,
-                                          verboseResults);
+    testS.writeTagsAndErrors(testS.finalTags, unknDictFile, verboseResults);
     if (writeUnknDict) testS.printUnknown(numSentences, unknDictFile);
     if (writeTopWords) testS.printTop(topWordsFile);
 
@@ -94,7 +75,7 @@ public class TestClassifier {
       numCorrectSentences++;
     }
     if (verboseResults) {
-      System.err.println("Sentence number: " + numSentences + "; length " + (len-1) +
+      System.err.println("Sentence number: " + numSentences + "; length " + (testS.size-1) +
                          "; correct: " + testS.numRight + "; wrong: " + testS.numWrong +
                          "; unknown wrong: " + testS.numWrongUnknown);
       System.err.println("  Total tags correct: " + numRight + "; wrong: " + numWrong +
@@ -107,8 +88,7 @@ public class TestClassifier {
    * TODO: Add the ability to have a second transformer to transform output back; possibly combine this method
    * with method below
    */
-  private void test(TaggerConfig config, String saveRoot,
-                    MaxentTagger maxentTagger)
+  private void test()
     throws IOException
   {
     numSentences = 0;
@@ -122,18 +102,25 @@ public class TestClassifier {
 
     boolean verboseResults = config.getVerboseResults();
 
-    for (List<TaggedWord> taggedSentence : fileRecord.reader()) {
-      List<String> sentence = new ArrayList<String>();
-      List<String> tagsArr = new ArrayList<String>();
-
-      for (TaggedWord cur : taggedSentence) {
-        tagsArr.add(cur.tag());
-        sentence.add(cur.word());
+    if (config.getNThreads() != 1) {
+      MulticoreWrapper<List<TaggedWord>, TestSentence> wrapper = new MulticoreWrapper<List<TaggedWord>, TestSentence>(config.getNThreads(), new TestSentenceProcessor(maxentTagger));
+      for (List<TaggedWord> taggedSentence : fileRecord.reader()) {
+        wrapper.put(taggedSentence);
+        while (wrapper.peek()) {
+          processResults(wrapper.poll(), pf, pf1, pf3, verboseResults);
+        }
       }
-
-      appendSentenceEnd(sentence, tagsArr);
-      testOneSentence(sentence, tagsArr, pf, pf1, pf3,
-                      verboseResults, maxentTagger);
+      wrapper.join();
+      while (wrapper.peek()) {
+        processResults(wrapper.poll(), pf, pf1, pf3, verboseResults);
+      }
+    } else{
+      for (List<TaggedWord> taggedSentence : fileRecord.reader()) {
+        TestSentence testS = new TestSentence(maxentTagger);
+        testS.setCorrectTags(taggedSentence);
+        testS.tagSentence(taggedSentence, false);
+        processResults(testS, pf, pf1, pf3, verboseResults);
+      }
     }
 
     if(pf != null) pf.close();
@@ -142,11 +129,11 @@ public class TestClassifier {
   }
 
 
-  String resultsString(TaggerConfig config, MaxentTagger maxentTagger) {
+  String resultsString(MaxentTagger maxentTagger) {
     StringBuilder output = new StringBuilder();
-    output.append("Model " + config.getModel() + " has xSize=" + maxentTagger.xSize +
+    output.append("Model " + maxentTagger.config.getModel() + " has xSize=" + maxentTagger.xSize +
                   ", ySize=" + maxentTagger.ySize + ", and numFeatures=" +
-                  maxentTagger.prob.lambda.length + ".\n");
+                  maxentTagger.getLambdaSolve().lambda.length + ".\n");
     output.append("Results on " + numSentences + " sentences and " +
                   (numRight + numWrong) + " words, of which " +
                   unknownWords + " were unknown.\n");
@@ -166,9 +153,9 @@ public class TestClassifier {
     return output.toString();
   }
 
-  void printModelAndAccuracy(TaggerConfig config, MaxentTagger maxentTagger) {
+  void printModelAndAccuracy(MaxentTagger maxentTagger) {
     // print the output all at once so that multiple threads don't clobber each other's output
-    System.err.println(resultsString(config, maxentTagger));
+    System.err.println(resultsString(maxentTagger));
   }
 
 
@@ -182,5 +169,26 @@ public class TestClassifier {
     writeTopWords = status;
   }
 
+  static class TestSentenceProcessor implements ThreadsafeProcessor<List<TaggedWord>, TestSentence> {
+    MaxentTagger maxentTagger;
+
+    public TestSentenceProcessor(MaxentTagger maxentTagger) {
+      this.maxentTagger = maxentTagger;
+    }
+
+    @Override
+    public TestSentence process(List<TaggedWord> taggedSentence) {
+      TestSentence testS = new TestSentence(maxentTagger);
+      testS.setCorrectTags(taggedSentence);
+      testS.tagSentence(taggedSentence, false);
+      return testS;
+    }
+
+    @Override
+    public ThreadsafeProcessor<List<TaggedWord>, TestSentence> newInstance() {
+      // MaxentTagger is threadsafe
+      return this;
+    }
+  }
 
 }

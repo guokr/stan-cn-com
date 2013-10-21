@@ -90,7 +90,7 @@ public interface Lexicon extends Serializable {
   void initializeTraining(double numTrees);
 
   /**
-   * Trains this lexicon on the Collection of trees.  
+   * Trains this lexicon on the Collection of trees.
    * Can be called more than once with different collections of trees.
    *
    * @param trees Trees to train on
@@ -103,7 +103,7 @@ public interface Lexicon extends Serializable {
   // Binarizer converts everything to CategoryWordTag, so we lose additional
   // lexical annotations. RawTrees should be the same size as trees.
   void train(Collection<Tree> trees, Collection<Tree> rawTrees);
-  
+
   void train(Tree tree, double weight);
 
   /**
@@ -127,7 +127,7 @@ public interface Lexicon extends Serializable {
   /**
    * Sometimes we might have a sentence of tagged words which we would
    * like to add to the lexicon, but they weren't part of a binarized,
-   * markovized, or otherwize annotated tree.
+   * markovized, or otherwise annotated tree.
    */
   void trainUnannotated(List<TaggedWord> sentence, double weight);
 

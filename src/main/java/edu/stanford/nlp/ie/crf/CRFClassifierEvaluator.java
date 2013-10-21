@@ -5,7 +5,7 @@ import edu.stanford.nlp.io.RuntimeIOException;
 import edu.stanford.nlp.optimization.CmdEvaluator;
 import edu.stanford.nlp.stats.MultiClassChunkEvalStats;
 import edu.stanford.nlp.util.CoreMap;
-import edu.stanford.nlp.util.Pair;
+import edu.stanford.nlp.util.Triple;
 
 import java.io.*;
 import java.util.Collection;
@@ -24,7 +24,6 @@ import java.util.List;
  */
 public class CRFClassifierEvaluator<IN extends CoreMap> extends CmdEvaluator {
   private CRFClassifier<IN> classifier;
-  private CRFLogConditionalObjectiveFunction func;
   // NOTE: Defalt uses -r, specify without -r if IOB
   private String cmdStr = "/u/nlp/bin/conlleval -r";
   private String[] cmd;
@@ -34,20 +33,19 @@ public class CRFClassifierEvaluator<IN extends CoreMap> extends CmdEvaluator {
   // Original object bank
   Collection<List<IN>> data;
   // Featurized data
-  List<Pair<int[][][], int[]>> featurizedData;
+  List<Triple<int[][][], int[], double[][][]>> featurizedData;
 
   public CRFClassifierEvaluator(String description,
                                 CRFClassifier<IN> classifier,
-                                CRFLogConditionalObjectiveFunction func,
                                 Collection<List<IN>> data,
-                                List<Pair<int[][][], int[]>> featurizedData)
+                                List<Triple<int[][][], int[], double[][][]>> featurizedData)
   {
     this.description = description;
     this.classifier = classifier;
-    this.func = func;
     this.data = data;
     this.featurizedData = featurizedData;
     cmd = getCmd(cmdStr);
+    saveOutput = true;
   }
 
   public CRFClassifierEvaluator(String description,
@@ -55,20 +53,13 @@ public class CRFClassifierEvaluator<IN extends CoreMap> extends CmdEvaluator {
   {
     this.description = description;
     this.classifier = classifier;
-  }
-
-  /**
-   * Set helper function
-   */
-  public void setHelperFunction(CRFLogConditionalObjectiveFunction func)
-  {
-    this.func = func;
+    saveOutput = true;
   }
 
   /**
    * Set the data to test on
    */
-  public void setTestData(Collection<List<IN>> data, List<Pair<int[][][], int[]>> featurizedData)
+  public void setTestData(Collection<List<IN>> data, List<Triple<int[][][], int[], double[][][]>> featurizedData)
   {
     this.data = data;
     this.featurizedData = featurizedData;
@@ -80,6 +71,7 @@ public class CRFClassifierEvaluator<IN extends CoreMap> extends CmdEvaluator {
    */
   public void setEvalCmd(String evalCmd)
   {
+    System.err.println("setEvalCmd to " + evalCmd);
     this.cmdStr = evalCmd;
     if (cmdStr != null) {
       cmdStr = cmdStr.trim();
@@ -90,15 +82,28 @@ public class CRFClassifierEvaluator<IN extends CoreMap> extends CmdEvaluator {
 
   public void setValues(double[] x)
   {
-    // TODO: Avoid this conversion of weights from 1D to 2D and usage of the
-    //       CRFLogConditionalObjectiveFunction
-    // (unnecessary and expensive if weights are large vectors - like say 100 million)
-    classifier.weights = func.to2D(x);
+    classifier.updateWeights(x);
   }
 
   public String[] getCmd()
   {
     return cmd;
+  }
+
+  private double interpretCmdOutput() {
+    String output = getOutput();
+    String[] parts = output.split("\\s+");
+    int fScoreIndex = 0;
+    for (; fScoreIndex < parts.length; fScoreIndex++)
+      if (parts[fScoreIndex].equals("FB1:"))
+        break;
+    fScoreIndex += 1;
+    if (fScoreIndex < parts.length)
+      return Double.parseDouble(parts[fScoreIndex]);
+    else {
+      System.err.println("ERROR in CRFClassifierEvaluator.interpretCmdOutput(), cannot find FB1 score in output:\n"+output);
+      return -1;
+    }
   }
 
   @Override
@@ -118,6 +123,7 @@ public class CRFClassifierEvaluator<IN extends CoreMap> extends CmdEvaluator {
     setValues(x);
     if (getCmd() != null) {
       evaluateCmd(getCmd());
+      score = interpretCmdOutput();
     } else {
       try {
         // TODO: Classify in memory instead of writing to tmp file

@@ -1,11 +1,10 @@
 package edu.stanford.nlp.parser.lexparser;
 
-import edu.stanford.nlp.objectbank.TokenizerFactory;
+import edu.stanford.nlp.process.TokenizerFactory;
 import edu.stanford.nlp.parser.metrics.AbstractEval;
 import edu.stanford.nlp.trees.*;
 import edu.stanford.nlp.ling.*;
 import edu.stanford.nlp.util.Filter;
-import edu.stanford.nlp.util.Function;
 import edu.stanford.nlp.util.Index;
 
 import java.io.OutputStream;
@@ -29,20 +28,13 @@ public interface TreebankLangParserParams extends TreebankFactory, Serializable 
 
   /**
    * Allows language specific processing (e.g., stemming) of head words.
-   * 
-   * @param headWord An {@link edu.stanford.nlp.ling.Label} that minimally implements the 
+   *
+   * @param headWord An {@link edu.stanford.nlp.ling.Label} that minimally implements the
    * {@link edu.stanford.nlp.ling.HasWord} and {@link edu.stanford.nlp.ling.HasTag} interfaces.
    * @return A processed {@link edu.stanford.nlp.ling.Label}
    */
   public Label processHeadWord(Label headWord);
-  
-  /**
-   * Convenience method for setting state parameters specific to evaluation. For example, if grammatical
-   * functions are retained during training but discarded during evaluation, this method may be used
-   * to make that state change.
-   */
-  public void setupForEval();
-  
+
   public void setInputEncoding(String encoding);
 
   public void setOutputEncoding(String encoding);
@@ -52,7 +44,7 @@ public interface TreebankLangParserParams extends TreebankFactory, Serializable 
    * Otherwise, evaluation will strip the grammatical functions.
    */
   public void setEvaluateGrammaticalFunctions(boolean evalGFs);
-  
+
   /**
    * Returns the output encoding being used.
    * @return The output encoding being used.
@@ -98,7 +90,7 @@ public interface TreebankLangParserParams extends TreebankFactory, Serializable 
    */
   public TreeTransformer collinizer();
 
-  
+
   /**
    * the tree transformer used to produce trees for evaluation.  Will
    * be applied both to the parse output tree and to the gold
@@ -122,7 +114,7 @@ public interface TreebankLangParserParams extends TreebankFactory, Serializable 
    * returns a MemoryTreebank appropriate to the testing treebank source
    */
   public MemoryTreebank testMemoryTreebank();
-  
+
   /**
    * Required to extend TreebankFactory
    */
@@ -224,7 +216,7 @@ public interface TreebankLangParserParams extends TreebankFactory, Serializable 
 
   /**
    * Returns a language specific object for evaluating PP attachment
-   *  
+   *
    * @return An object that implements {@link AbstractEval}
    */
   public AbstractEval ppAttachmentEval();
@@ -242,6 +234,8 @@ public interface TreebankLangParserParams extends TreebankFactory, Serializable 
    * UnsupportedOperationException if the language doesn't support
    * dependencies or GrammaticalStructures.
    */
-  GrammaticalStructure getGrammaticalStructure(Tree t, Filter<String> filter, 
+  GrammaticalStructure getGrammaticalStructure(Tree t, Filter<String> filter,
                                                HeadFinder hf);
+
+  boolean supportsBasicDependencies();
 }

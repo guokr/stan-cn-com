@@ -1,24 +1,24 @@
 package edu.stanford.nlp.util;
 
-import java.lang.reflect.Array;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
-import java.lang.reflect.TypeVariable;
-import java.lang.reflect.WildcardType;
+import java.io.File;
+import java.lang.reflect.*;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.GregorianCalendar;
 import java.util.LinkedList;
 import java.util.List;
 
 /**
-  A meta class using Java's reflection library. Can be used to create a single
-  instance, or a factory, where each Class from the factory share their
-  constructor parameters.
-  @author Gabor Angeli
-*/
+ * A meta class using Java's reflection library. Can be used to create a single
+ * instance, or a factory, where each Class from the factory share their
+ * constructor parameters.
+ *
+ * @author Gabor Angeli
+ */
 public class MetaClass {
 
   public static class ClassCreationException extends RuntimeException {
+
     private static final long serialVersionUID = -5980065992461870357L;
 
     private ClassCreationException() {
@@ -32,8 +32,13 @@ public class MetaClass {
     private ClassCreationException(Throwable cause) {
       super(cause);
     }
+
+    private ClassCreationException(String msg, Throwable cause) {
+      super(msg, cause);
+    }
+
   }
-  
+
   public static final class ConstructorNotFoundException extends ClassCreationException {
     private static final long serialVersionUID = -5980065992461870357L;
 
@@ -48,6 +53,12 @@ public class MetaClass {
     private ConstructorNotFoundException(Throwable cause) {
       super(cause);
     }
+
+    private ConstructorNotFoundException(String msg, Throwable cause) {
+      super(msg, cause);
+    }
+
+
   }
 
   public static final class ClassFactory<T> {
@@ -55,7 +66,7 @@ public class MetaClass {
     private Class<T> cl;
     private Constructor<T> constructor;
 
-    private boolean samePrimitive(Class<?> a, Class<?> b){
+    private static boolean samePrimitive(Class<?> a, Class<?> b){
       if(!a.isPrimitive() && !b.isPrimitive()) return false;
       if(a.isPrimitive()){
         try {
@@ -75,8 +86,8 @@ public class MetaClass {
       }
       throw new IllegalStateException("Impossible case");
     }
-    
-    private int superDistance(Class<?> candidate, Class<?> target) {
+
+    private static int superDistance(Class<?> candidate, Class<?> target) {
       if (candidate == null) {
         // --base case: does not implement
         return Integer.MIN_VALUE;
@@ -205,7 +216,7 @@ public class MetaClass {
 
     /**
      * Creates an instance of the class produced in this factory
-     * 
+     *
      * @param params
      *            The arguments to the constructor of the class NOTE: the
      *            resulting instance will [unlike java] invoke the most
@@ -224,13 +235,13 @@ public class MetaClass {
         if(!accessible){ constructor.setAccessible(false); }
         return rtn;
       } catch (Exception e) {
-        throw new ClassCreationException(e);
+        throw new ClassCreationException("MetaClass couldn't create " + constructor + " with args " + Arrays.toString(params), e);
       }
     }
 
     /**
      * Returns the full class name for the objects being produced
-     * 
+     *
      * @return The class name for the objects produced
      */
     public String getName() {
@@ -270,23 +281,24 @@ public class MetaClass {
     public int hashCode() {
       return cl.hashCode();
     }
-  }
+
+  } // end static class ClassFactory
 
   private String classname;
 
   /**
    * Creates a new MetaClass producing objects of the given type
-   * 
+   *
    * @param classname
    *            The full classname of the objects to create
    */
   public MetaClass(String classname) {
     this.classname = classname;
   }
-  
+
   /**
    * Creates a new MetaClass producing objects of the given type
-   * 
+   *
    * @param classname
    *            The class to create
    */
@@ -297,7 +309,7 @@ public class MetaClass {
   /**
    * Creates a factory for producing instances of this class from a
    * constructor taking the given types as arguments
-   * 
+   *
    * @param <E>
    *            The type of the objects to be produced
    * @param classes
@@ -317,7 +329,7 @@ public class MetaClass {
   /**
    * Creates a factory for producing instances of this class from a
    * constructor taking the given types as arguments
-   * 
+   *
    * @param <E>
    *            The type of the objects to be produced
    * @param classes
@@ -337,7 +349,7 @@ public class MetaClass {
   /**
    * Creates a factory for producing instances of this class from a
    * constructor taking objects of the types given
-   * 
+   *
    * @param <E>
    *            The type of the objects to be produced
    * @param objects
@@ -359,7 +371,7 @@ public class MetaClass {
    * given an array of objects as constructor parameters NOTE: the resulting
    * instance will [unlike java] invoke the most narrow constructor rather
    * than the one which matches the signature passed to this function
-   * 
+   *
    * @param <E>
    *            The type of the object returned
    * @param objects
@@ -376,7 +388,7 @@ public class MetaClass {
    * given an array of objects as constructor parameters NOTE: the resulting
    * instance will [unlike java] invoke the most narrow constructor rather
    * than the one which matches the signature passed to this function
-   * 
+   *
    * @param <E>
    *            The type of the object returned
    * @param type
@@ -395,7 +407,7 @@ public class MetaClass {
           + " into " + type.getName());
     }
   }
-  
+
   public boolean checkConstructor(Object... params){
     try{
       createInstance(params);
@@ -425,7 +437,7 @@ public class MetaClass {
 
   /**
    * Creates a new MetaClass (helper method)
-   * 
+   *
    * @param classname
    *            The name of the class to create
    * @return A new MetaClass object of the given class
@@ -433,10 +445,10 @@ public class MetaClass {
   public static MetaClass create(String classname) {
     return new MetaClass(classname);
   }
-  
+
   /**
    * Creates a new MetaClass (helper method)
-   * 
+   *
    * @param clazz
    *            The class to create
    * @return A new MetaClass object of the given class
@@ -444,7 +456,7 @@ public class MetaClass {
   public static MetaClass create(Class <?> clazz) {
     return new MetaClass(clazz);
   }
-  
+
   /**
    * Utility method for cast
    * @param type The type to cast into a class
@@ -469,7 +481,7 @@ public class MetaClass {
    * @param encoded The String encoded array
    * @return A String array corresponding to the encoded array
    */
-	private static final String[] decodeArray(String encoded){
+	private static String[] decodeArray(String encoded){
 		char[] chars = encoded.trim().toCharArray();
 
 		//--Parse the String
@@ -497,18 +509,22 @@ public class MetaClass {
 				}
 			}else{
 				//(case: normal)
-				if(chars[i] == '"'){ quoteCloseChar = '"';
-				} else if(chars[i] == '\''){ quoteCloseChar = '\'';
-				} else if(chars[i] == ','){
+				if(chars[i] == '"'){
+          quoteCloseChar = '"';
+				} else if(chars[i] == '\''){
+          quoteCloseChar = '\'';
+				} else if(chars[i] == ',' || chars[i] == ' ' || chars[i] == '\t' || chars[i] == '\n'){
 					//break
-					terms.add(current);
+          if (current.length() > 0) {
+					  terms.add(current);
+          }
 					current = new StringBuilder();
 				}else{
 					current.append(chars[i]);
 				}
 			}
 		}
-		
+
 		//--Return
 		if(current.length() > 0) terms.add(current);
 		String[] rtn = new String[terms.size()];
@@ -517,97 +533,159 @@ public class MetaClass {
 			rtn[i] = b.toString().trim();
 			i += 1;
 		}
-		return rtn;
-	}
-  
+    return rtn;
+  }
+
   /**
    * Cast a String representation of an object into that object.
    * E.g. "5.4" will be cast to a Double; "[1,2,3]" will be cast
    * to an Integer[].
-   * 
+   *
    * NOTE: Date parses from a Long
-   * 
+   *
    * @param <E> The type of the object returned (same as type)
    * @param value The string representation of the object
    * @param type The type (usually class) to be returned (same as E)
    * @return An object corresponding to the String value passed
    */
-	@SuppressWarnings( "unchecked" )
-	public static final <E> E cast(String value, Type type){
-		//--Get Type
-		Class <?> clazz = null;
-		if(type instanceof Class){
-			clazz = (Class <?>) type;
-		}else if(type instanceof ParameterizedType){
-			ParameterizedType pt = (ParameterizedType) type;
-			clazz = (Class <?>) pt.getRawType();
-		}else{
-			clazz = type2class(type);
-			throw new IllegalArgumentException("Cannot cast to type (unhandled type): " + type);
-		}
-		//--Cast
-		if(clazz.isAssignableFrom(String.class)){
-			// (case: String)
-			return (E) value;
-		}else if(Boolean.class.isAssignableFrom(clazz) || boolean.class.isAssignableFrom(clazz)){
-			//(case: boolean)
-			if(value.equals("1")){ return (E) new Boolean(true); }
-			return (E) new Boolean( Boolean.parseBoolean(value) );
-		}else if(Integer.class.isAssignableFrom(clazz) || int.class.isAssignableFrom(clazz)){
-			//(case: integer)
-			return (E) new Integer(Integer.parseInt(value));
-		}else if(Long.class.isAssignableFrom(clazz) || long.class.isAssignableFrom(clazz)){
-			//(case: long)
-			return (E) new Long(Long.parseLong(value));
-		}else if(Float.class.isAssignableFrom(clazz) || float.class.isAssignableFrom(clazz)){
-			//(case: float)
-			if(value == null){ return (E) new Float(Float.NaN); }
-			return (E) new Float(Float.parseFloat(value));
-		}else if(Double.class.isAssignableFrom(clazz) || double.class.isAssignableFrom(clazz)){
-			//(case: double)
-			if(value == null){ return (E) new Double(Double.NaN); }
-			return (E) new Double(Double.parseDouble(value));
-		}else if(Short.class.isAssignableFrom(clazz) || short.class.isAssignableFrom(clazz)){
-			//(case: short)
-			return (E) new Short(Short.parseShort(value));
-		}else if(Byte.class.isAssignableFrom(clazz) || byte.class.isAssignableFrom(clazz)){
-			//(case: byte)
-			return (E) new Byte(Byte.parseByte(value));
-		}else if(Character.class.isAssignableFrom(clazz) || char.class.isAssignableFrom(clazz)){
-			//(case: char)
-			return (E) new Character((char) Integer.parseInt(value));
-		}else if(java.util.Date.class.isAssignableFrom(clazz)){
-			//(case: date)
-			try {
-				return (E) new Date(Long.parseLong(value));
-			} catch (NumberFormatException e) {
-				return null;
-			}
-		}else if(clazz.isArray()){
-			if(value == null){ return null; }
-			Class <?> subType = clazz.getComponentType();
-			// (case: array)
-			String[] strings = decodeArray(value);
-			Object[] array = (Object[]) Array.newInstance(clazz.getComponentType(), strings.length);
-			for(int i=0; i<strings.length; i++){
-				array[i] = cast(strings[i], subType);
-			}
-			return (E) array;
-		} else if(clazz.isEnum()){
-			// (case: enumeration)
-			Class c = (Class) clazz;
-			if(value == null){ return null; }
-			return (E) Enum.valueOf(c, value);
-		} else {
-			return null;
-		}
-	}
+  @SuppressWarnings({ "unchecked", "rawtypes" })
+  public static final <E> E cast(String value, Type type){
+    //--Get Type
+    Class <?> clazz = null;
+    Type[] params = null;
+    if(type instanceof Class){
+      clazz = (Class <?>) type;
+    }else if(type instanceof ParameterizedType){
+      ParameterizedType pt = (ParameterizedType) type;
+      params = pt.getActualTypeArguments();
+      clazz = (Class <?>) pt.getRawType();
+    }else{
+      clazz = type2class(type);
+      throw new IllegalArgumentException("Cannot cast to type (unhandled type): " + type);
+    }
+    //--Cast
+    if(String.class.isAssignableFrom(clazz)){
+      // (case: String)
+      return (E) value;
+    }else if(Boolean.class.isAssignableFrom(clazz) || boolean.class.isAssignableFrom(clazz)){
+      //(case: boolean)
+      if("1".equals(value)){ return (E) new Boolean(true); }
+      return (E) new Boolean( Boolean.parseBoolean(value) );
+    }else if(Integer.class.isAssignableFrom(clazz) || int.class.isAssignableFrom(clazz)){
+      //(case: integer)
+      try {
+        return (E) new Integer(Integer.parseInt(value));
+      } catch (NumberFormatException e) {
+        return (E) new Integer((int) Double.parseDouble(value));
+      }
+    }else if(Long.class.isAssignableFrom(clazz) || long.class.isAssignableFrom(clazz)){
+      //(case: long)
+      try {
+        return (E) new Long(Long.parseLong(value));
+      } catch (NumberFormatException e) {
+        return (E) new Long((long) Double.parseDouble(value));
+      }
+    }else if(Float.class.isAssignableFrom(clazz) || float.class.isAssignableFrom(clazz)){
+      //(case: float)
+      if(value == null){ return (E) new Float(Float.NaN); }
+      return (E) new Float(Float.parseFloat(value));
+    }else if(Double.class.isAssignableFrom(clazz) || double.class.isAssignableFrom(clazz)){
+      //(case: double)
+      if(value == null){ return (E) new Double(Double.NaN); }
+      return (E) new Double(Double.parseDouble(value));
+    }else if(Short.class.isAssignableFrom(clazz) || short.class.isAssignableFrom(clazz)){
+      //(case: short)
+      try {
+        return (E) new Short(Short.parseShort(value));
+      } catch (NumberFormatException e) {
+        return (E) new Short((short) Double.parseDouble(value));
+      }
+    }else if(Byte.class.isAssignableFrom(clazz) || byte.class.isAssignableFrom(clazz)){
+      //(case: byte)
+      try {
+        return (E) new Byte(Byte.parseByte(value));
+      } catch (NumberFormatException e) {
+        return (E) new Byte((byte) Double.parseDouble(value));
+      }
+    }else if(Character.class.isAssignableFrom(clazz) || char.class.isAssignableFrom(clazz)){
+      //(case: char)
+      return (E) new Character((char) Integer.parseInt(value));
+    }else if(java.util.Date.class.isAssignableFrom(clazz)){
+      //(case: date)
+      try {
+        return (E) new Date(Long.parseLong(value));
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    } else if(java.util.Calendar.class.isAssignableFrom(clazz)){
+      //(case: date)
+      try {
+        Date d = new Date(Long.parseLong(value));
+        GregorianCalendar cal = new GregorianCalendar();
+        cal.setTime(d);
+        return (E) cal;
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    } else if(File.class.isAssignableFrom(clazz)){
+      return (E) new File(value);
+    } else if(Class.class.isAssignableFrom(clazz)){
+      try {
+        return (E) Class.forName(value);
+      } catch (ClassNotFoundException e) {
+        return null;
+      }
+    } else if(clazz.isArray()){
+      if(value == null){ return null; }
+      Class <?> subType = clazz.getComponentType();
+      // (case: array)
+      String[] strings = decodeArray(value);
+      Object[] array = (Object[]) Array.newInstance(clazz.getComponentType(), strings.length);
+      for(int i=0; i<strings.length; i++){
+        array[i] = cast(strings[i], subType);
+      }
+      return (E) array;
+    } else if(clazz.isEnum()){
+      // (case: enumeration)
+      Class c = (Class) clazz;
+      if(value == null){ return null; }
+      if (value.charAt(0) == '"') value = value.substring(1);
+      if (value.charAt(value.length()-1) == '"') value = value.substring(0, value.length() - 1);
+      try {
+        return (E) Enum.valueOf(c, value);
+      } catch (Exception e){
+        try {
+          return (E) Enum.valueOf(c, value.toLowerCase());
+        } catch (Exception e2){
+          try {
+            return (E) Enum.valueOf(c, value.toUpperCase());
+          } catch (Exception e3){
+            return (E) Enum.valueOf(c,
+                (Character.isUpperCase(value.charAt(0)) ? Character.toLowerCase(value.charAt(0)) : Character.toUpperCase(value.charAt(0))) +
+                    value.substring(1));
+          }
+        }
+      }
+    } else {
+      try {
+        // (case: can parse from string)
+        Method decode = clazz.getMethod("fromString", String.class);
+        return (E) decode.invoke(MetaClass.create(clazz), value);
+      } catch (NoSuchMethodException e) {  // Silent errors for misc failures
+      } catch (InvocationTargetException e) {
+      } catch (IllegalAccessException e) {
+      } catch (ClassCastException e) {
+      }
+      // We could not cast this object
+      return null;
+    }
+  }
 
-  private static final <E> E argmin(E[] elems, int[] scores, int atLeast){
+  private static <E> E argmin(E[] elems, int[] scores, int atLeast) {
     int argmin = argmin(scores, atLeast);
     return argmin >= 0 ? elems[argmin] : null;
   }
-  private static final int argmin(int[] scores, int atLeast){
+  private static int argmin(int[] scores, int atLeast) {
     int min = Integer.MAX_VALUE;
     int argmin = -1;
     for(int i=0; i<scores.length; i++){

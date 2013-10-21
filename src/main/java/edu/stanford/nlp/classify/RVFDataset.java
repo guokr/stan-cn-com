@@ -9,10 +9,10 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.Set;
@@ -25,6 +25,7 @@ import edu.stanford.nlp.math.ArrayMath;
 import edu.stanford.nlp.stats.ClassicCounter;
 import edu.stanford.nlp.stats.Counter;
 import edu.stanford.nlp.stats.Counters;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Index;
 import edu.stanford.nlp.util.Pair;
 import edu.stanford.nlp.util.HashIndex;
@@ -411,8 +412,7 @@ public class RVFDataset<L, F> extends GeneralDataset<L, F> { // implements Itera
       System.arraycopy(labels, 0, newLabels, 0, size);
       labels = newLabels;
     }
-    labelIndex.add(label);
-    labels[size] = labelIndex.indexOf(label);
+    labels[size] = labelIndex.indexOf(label, true);
   }
 
   private void addFeatures(Counter<F> features) {
@@ -424,21 +424,22 @@ public class RVFDataset<L, F> extends GeneralDataset<L, F> { // implements Itera
       data = newData;
       values = newValues;
     }
-    int[] intFeatures = new int[features.size()];
-    double[] featureValues = new double[features.size()];
 
-    int j = 0;
-    for (F feature : features.keySet()) {
-      featureIndex.add(feature);
-      int fID = featureIndex.indexOf(feature);
+    final List<F> featureNames = new ArrayList<F>(features.keySet());
+    final int nFeatures = featureNames.size();
+    data[size] = new int[nFeatures];
+    values[size] = new double[nFeatures];
+    for (int i = 0; i < nFeatures; ++i) {
+      F feature = featureNames.get(i);
+      int fID = featureIndex.indexOf(feature, true);
       if (fID >= 0) {
-        intFeatures[j] = fID;
-        featureValues[j] = features.getCount(feature);
-        j++;
+        data[size][i] = fID;
+        values[size][i] = features.getCount(feature);
+      } else {
+        // Usually a feature present at test but not training time.
+        assert featureIndex.isLocked() : "Could not add feature to index: " + feature;
       }
     }
-    data[size] = intFeatures;
-    values[size] = featureValues;
   }
 
   /**
@@ -521,7 +522,7 @@ public class RVFDataset<L, F> extends GeneralDataset<L, F> { // implements Itera
     pw.println();
     for (int i = 0; i < labels.length; i++) {
       pw.print(labelIndex.get(i));
-      Set<Integer> feats = new HashSet<Integer>();
+      Set<Integer> feats = Generics.newHashSet();
       for (int j = 0; j < data[i].length; j++) {
         int feature = data[i][j];
         feats.add(Integer.valueOf(feature));
@@ -550,7 +551,7 @@ public class RVFDataset<L, F> extends GeneralDataset<L, F> { // implements Itera
     pw.println();
     for (int i = 0; i < size; i++) { // changed labels.length to size
       pw.print(labelIndex.get(labels[i])); // changed i to labels[i]
-      HashMap<Integer, Double> feats = new HashMap<Integer, Double>();
+      Map<Integer, Double> feats = Generics.newHashMap();
       for (int j = 0; j < data[i].length; j++) {
         int feature = data[i][j];
         double val = values[i][j];

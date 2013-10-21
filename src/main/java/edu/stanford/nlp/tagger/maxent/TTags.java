@@ -1,11 +1,11 @@
 package edu.stanford.nlp.tagger.maxent;
 
-import edu.stanford.nlp.io.InDataStreamFile;
-import edu.stanford.nlp.io.OutDataStreamFile;
+import edu.stanford.nlp.io.IOUtils;
 import edu.stanford.nlp.io.RuntimeIOException;
 import edu.stanford.nlp.tagger.common.TaggerConstants;
-import edu.stanford.nlp.util.Index;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.HashIndex;
+import edu.stanford.nlp.util.Index;
 
 import java.io.IOException;
 import java.io.DataInputStream;
@@ -26,8 +26,8 @@ import java.util.*;
 public class TTags {
 
   private Index<String> index = new HashIndex<String>();
-  private final HashSet<String> closed = new HashSet<String>();
-  private HashSet<String> openTags = null; /* cache */
+  private final Set<String> closed = Generics.newHashSet();
+  private Set<String> openTags = null; /* cache */
   private final boolean isEnglish; // for speed
   private static final boolean doDeterministicTagExpansion = true;
 
@@ -40,7 +40,7 @@ public class TTags {
   /** When making a decision based on the training data as to whether a
    *  tag is closed, this is the threshold for how many tokens can be in
    *  a closed class - purposely conservative.
-   * TODO: make this an option you can set
+   * TODO: make this an option you can set; need to pass in TaggerConfig object and then can say = config.getClosedTagThreshold());
    */
   private final int closedTagThreshold = Integer.valueOf(TaggerConfig.CLOSED_CLASS_THRESHOLD);
 
@@ -59,9 +59,9 @@ public class TTags {
     String[] closedArray = config.getClosedClassTags();
     String[] openArray = config.getOpenClassTags();
     if(closedArray.length > 0) {
-      closed = new HashSet<String>(Arrays.asList(closedArray));
+      closed = Generics.newHashSet(Arrays.asList(closedArray));
     } else if(openArray.length > 0) {
-      openTags = new HashSet<String>(Arrays.asList(openArray));
+      openTags = Generics.newHashSet(Arrays.asList(openArray));
     } else {
       learnClosedTags = config.getLearnClosedClassTags();
       closedTagThreshold = config.getClosedTagThreshold();
@@ -154,7 +154,7 @@ public class TTags {
       isEnglish = false;
     } else if(language.equalsIgnoreCase("german")) {
       // The current version of the German tagger is built with the
-      // negra-tigra data set.  We use the STTS tag set.  In
+      // negra-tiger data set.  We use the STTS tag set.  In
       // particular, we use the version with the changes described in
       // appendix A-2 of
       // http://www.uni-potsdam.de/u/germanistik/ls_dgs/tiger1-intro.pdf
@@ -235,6 +235,10 @@ public class TTags {
       closed.add("-LRB-");
       closed.add("-RRB-");
       isEnglish = false;
+    } else if (language.equalsIgnoreCase("testing")) {
+      closed.add(".");
+      closed.add(TaggerConstants.EOS_TAG);
+      isEnglish = false;
     } else if (language.equalsIgnoreCase("")) {
       isEnglish = false;
     }
@@ -251,7 +255,7 @@ public class TTags {
    */
   public Set<String> getOpenTags() {
     if (openTags == null) { /* cache check */
-      HashSet<String> open = new HashSet<String>();
+      Set<String> open = Generics.newHashSet();
 
       for (String tag : index) {
         if ( ! closed.contains(tag)) {
@@ -265,8 +269,7 @@ public class TTags {
   }
 
   protected int add(String tag) {
-    index.add(tag);
-    return index.indexOf(tag);
+    return index.indexOf(tag, true);
   }
 
   public String getTag(int i) {
@@ -274,9 +277,9 @@ public class TTags {
   }
 
   protected void save(String filename,
-                      HashMap<String, HashSet<String>> tagTokens) {
+                      Map<String, Set<String>> tagTokens) {
     try {
-      DataOutputStream out = new OutDataStreamFile(filename);
+      DataOutputStream out = IOUtils.getDataOutputStream(filename);
       save(out, tagTokens);
       out.close();
     } catch (IOException e) {
@@ -285,7 +288,7 @@ public class TTags {
   }
 
   protected void save(DataOutputStream file,
-                      HashMap<String, HashSet<String>> tagTokens) {
+                      Map<String, Set<String>> tagTokens) {
     try {
       file.writeInt(index.size());
       for (String item : index) {
@@ -305,7 +308,7 @@ public class TTags {
 
   protected void read(String filename) {
     try {
-      InDataStreamFile in = new InDataStreamFile(filename);
+      DataInputStream in = IOUtils.getDataInputStream(filename);
       read(in);
       in.close();
     } catch (IOException e) {
@@ -348,7 +351,7 @@ public class TTags {
   }
 
   public void setOpenClassTags(String[] openClassTags) {
-    openTags = new HashSet<String>();
+    openTags = Generics.newHashSet();
     openTags.addAll(Arrays.asList(openClassTags));
     for (String tag : openClassTags) {
       add(tag);

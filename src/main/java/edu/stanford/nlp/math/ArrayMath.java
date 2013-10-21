@@ -29,6 +29,24 @@ public class ArrayMath {
     return v.length;
   }
 
+  // GENERATION -----------------------------------------------------------------
+
+  /**
+   * Generate a range of integers from start (inclusive) to end (exclusive).
+   * Similar to the Python range() builtin function.
+   *
+   * @param start
+   * @param end
+   * @return integers from [start...end)
+   */
+  public static int[] range(int start, int end) {
+    assert end > start;
+    int len = end - start;
+    int[] range = new int[len];
+    for (int i = 0; i < range.length; ++i) range[i] = i+start;
+    return range;
+  }
+
 
   // CASTS ----------------------------------------------------------------------
 
@@ -855,7 +873,7 @@ public class ArrayMath {
    * @param logInputs An array of numbers [log(x1), ..., log(xn)]
    * @return log(x1 + ... + xn)
    */
-  public static double logSum(double[] logInputs) {
+  public static double logSum(double... logInputs) {
     return logSum(logInputs,0,logInputs.length);
   }
 

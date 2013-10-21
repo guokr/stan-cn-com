@@ -10,6 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import edu.stanford.nlp.stats.ClassicCounter;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Index;
 import edu.stanford.nlp.util.Pair;
 import edu.stanford.nlp.util.Triple;
@@ -46,7 +47,7 @@ public class ChineseSimWordAvgDepGrammar extends MLEDependencyGrammar {
   }
 
   public Map<Pair<Integer, String>, List<Triple<Integer, String, Double>>> getMap(String filename) {
-    Map<Pair<Integer, String>, List<Triple<Integer, String, Double>>> hashMap = new HashMap<Pair<Integer, String>, List<Triple<Integer, String, Double>>>();
+    Map<Pair<Integer, String>, List<Triple<Integer, String, Double>>> hashMap = Generics.newHashMap();
     try {
       BufferedReader wordMapBReader = new BufferedReader(new InputStreamReader(new FileInputStream(filename), "UTF-8"));
 
@@ -236,11 +237,11 @@ public class ChineseSimWordAvgDepGrammar extends MLEDependencyGrammar {
 
     //smooth_aTW_hTWd = smooth_aTW_hTWd*2;
     pb_aTW_hTWd = (c_aTW_hTWd + smoothSim_aTW_hTWd * pSim_aTW_hTd + smooth_aTW_hTWd * p_aTW_hTd) / (c_hTWd + smoothSim_aTW_hTWd + smooth_aTW_hTWd);
-    //System.out.println(dependency);
-    //System.out.println(c_aTW_hTWd+" + "+ smoothSim_aTW_hTWd+" * "+pSim_aTW_hTd+" + "+smooth_aTW_hTWd+" * "+p_aTW_hTd);
-    //System.out.println("--------------------------------  = "+pb_aTW_hTWd);
-    //System.out.println(c_hTWd+" + "+ smoothSim_aTW_hTWd+" + "+smooth_aTW_hTWd);
-    //System.out.println();
+    System.out.println(dependency);
+    System.out.println(c_aTW_hTWd+" + "+ smoothSim_aTW_hTWd+" * "+pSim_aTW_hTd+" + "+smooth_aTW_hTWd+" * "+p_aTW_hTd);
+    System.out.println("--------------------------------  = "+pb_aTW_hTWd);
+    System.out.println(c_hTWd+" + "+ smoothSim_aTW_hTWd+" + "+smooth_aTW_hTWd);
+    System.out.println();
     //}
 
     //pb_aT_hTWd = (c_aT_hTWd + smooth_aT_hTWd * p_aT_hTd) / (c_hTWd + smooth_aT_hTWd);

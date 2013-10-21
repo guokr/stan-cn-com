@@ -70,7 +70,7 @@ public abstract class AbstractLinearClassifierFactory<L, F> implements Classifie
    *            Datum} objects to train the classifier on
    * @return A Classifier trained on a collection of Datum
    */
-  public LinearClassifier<L, F> trainClassifier(Reference<Collection<Datum<L, F>>> ref) {
+  public LinearClassifier<L, F> trainClassifier(Reference<? extends Collection<Datum<L, F>>> ref) {
     Collection<Datum<L, F>> examples = ref.get();
     return trainClassifier(examples);
   }

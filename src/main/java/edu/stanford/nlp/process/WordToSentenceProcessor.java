@@ -55,6 +55,9 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
 
   private static final boolean DEBUG = false;
 
+  public static final Set<String> DEFAULT_BOUNDARY_FOLLOWERS = Collections.unmodifiableSet(Generics.newHashSet(Arrays.asList(")", "]", "\"", "\'", "''", "-RRB-", "-RSB-", "-RCB-")));
+  public static final Set<String> DEFAULT_SENTENCE_BOUNDARIES_TO_DISCARD = Collections.unmodifiableSet(Generics.newHashSet(Arrays.asList(WhitespaceLexer.NEWLINE, PTBLexer.NEWLINE_TOKEN)));
+
   /**
    * Regex for tokens (Strings) that qualify as sentence-final tokens.
    */
@@ -79,6 +82,7 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
 
   private boolean isOneSentence;
 
+  private boolean allowEmptySentences = false;
 
   public void setSentenceBoundaryToDiscard(Set<String> regexSet) {
     sentenceBoundaryToDiscard = new ArrayList<Pattern>(regexSet.size());
@@ -93,6 +97,14 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
 
   public void setOneSentence(boolean oneSentence) {
     isOneSentence = oneSentence;
+  }
+
+  public boolean allowEmptySentences() {
+    return allowEmptySentences;
+  }
+
+  public void setAllowEmptySentences(boolean allowEmptySentences) {
+    this.allowEmptySentences = allowEmptySentences;
   }
 
   public void addHtmlSentenceBoundaryToDiscard(Set<String> set) {
@@ -115,6 +127,7 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
     return false;
   }
 
+  @Override
   public List<List<IN>> process(List<? extends IN> words) {
     if (isOneSentence) {
       List<List<IN>> sentences = Generics.newArrayList();
@@ -140,7 +153,7 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
    */
   public List<List<IN>> wordsToSentences(List<? extends IN> words) {
     List<List<IN>> sentences = Generics.newArrayList();
-    List<IN> currentSentence = null;
+    List<IN> currentSentence = new ArrayList<IN>();
     List<IN> lastSentence = null;
     boolean insideRegion = false;
     for (IN o: words) {
@@ -166,9 +179,6 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
 
       if (DEBUG) {
         EncodingPrintWriter.err.println("Word is " + word, "UTF-8");
-      }
-      if (currentSentence == null) {
-        currentSentence = new ArrayList<IN>();
       }
       if (sentenceRegionBeginPattern != null && ! insideRegion) {
         if (sentenceRegionBeginPattern.matcher(word).matches()) {
@@ -209,26 +219,25 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
             System.err.println("  added to current");
           }
         }
-        if (newSent && currentSentence.size() > 0) {
+        if (newSent && (!currentSentence.isEmpty() || allowEmptySentences())) {
           if (DEBUG) {
             System.err.println("  beginning new sentence");
           }
           sentences.add(currentSentence);
           // adds this sentence now that it's complete
           lastSentence = currentSentence;
-          currentSentence = null; // clears the current sentence
+          currentSentence = new ArrayList<IN>(); // clears the current sentence
         }
       }
     }
 
     // add any words at the end, even if there isn't a sentence
     // terminator at the end of file
-    if (currentSentence != null && currentSentence.size() > 0) {
+    if ( ! currentSentence.isEmpty()) {
       sentences.add(currentSentence); // adds last sentence
     }
     return sentences;
   }
-
 
 
   public <L, F> Document<L, F, List<IN>> processDocument(Document<L, F, IN> in) {
@@ -238,9 +247,10 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
   }
 
   /**
-   * Create a <code>WordToSentenceProcessor</code> using a sensible default
-   * list of tokens to split on.  The default set is: {".","?","!"} and
-   * any combination of ! or ?, as in !!!?!?!?!!!?!!?!!!
+   * Create a {@code WordToSentenceProcessor} using a sensible default
+   * list of tokens to split on for English/Latin writing systems.
+   * The default set is: {".","?","!"} and
+   * any combination of ! or ?, as in !!!?!?!?!!!?!!?!!!.
    */
   public WordToSentenceProcessor() {
     this("\\.|[!?]+");
@@ -248,27 +258,18 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
 
   /**
    * Flexibly set the set of acceptable sentence boundary tokens, but with
-   * a default set of allowed boundary following tokens (based on English
-   * and Penn Treebank encoding).
+   * a default set of allowed boundary following tokens and sentence boundary
+   * to discard tokens (based on English and Penn Treebank encoding).
    * The allowed set of boundary followers is:
    * {")","]","\"","\'", "''", "-RRB-", "-RSB-", "-RCB-"}.
+   * The default set of discarded separator tokens includes the
+   * newline tokens used by WhitespaceLexer and PTBLexer.
    *
    * @param boundaryTokenRegex The set of boundary tokens
    */
   public WordToSentenceProcessor(String boundaryTokenRegex) {
-    this(boundaryTokenRegex, Generics.newHashSet(Arrays.asList(")", "]", "\"", "\'", "''", "-RRB-", "-RSB-", "-RCB-")));
+    this(boundaryTokenRegex, DEFAULT_BOUNDARY_FOLLOWERS, DEFAULT_SENTENCE_BOUNDARIES_TO_DISCARD);
   }
-
-  /**
-   * Flexibly set the set of acceptable sentence boundary tokens and
-   * also the set of tokens commonly following sentence boundaries, and
-   * the set of discarded separator tokens.
-   * The default set of discarded separator tokens is: {"\n"}.
-   */
-  public WordToSentenceProcessor(String boundaryTokenRegex, Set<String> boundaryFollowers) {
-    this(boundaryTokenRegex, boundaryFollowers, Collections.singleton("\n"));
-  }
-
 
   /**
    * Flexibly set the set of acceptable sentence boundary tokens,
@@ -280,11 +281,6 @@ public class WordToSentenceProcessor<IN> implements ListProcessor<IN, List<IN>> 
                                  Set<String> boundaryFollowers,
                                  Set<String> boundaryToDiscard) {
     this(boundaryTokenRegex, boundaryFollowers, boundaryToDiscard, null, null);
-  }
-
-  public WordToSentenceProcessor(Pattern regionBeginPattern, Pattern regionEndPattern) {
-    this("", Collections.<String>emptySet(),
-         Collections.<String>emptySet(), regionBeginPattern, regionEndPattern);
   }
 
   /**

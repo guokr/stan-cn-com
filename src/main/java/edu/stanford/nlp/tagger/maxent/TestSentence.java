@@ -15,11 +15,14 @@ import edu.stanford.nlp.ling.HasWord;
 import edu.stanford.nlp.ling.Sentence;
 import edu.stanford.nlp.ling.TaggedWord;
 import edu.stanford.nlp.math.ArrayMath;
+import edu.stanford.nlp.math.SloppyMath;
 import edu.stanford.nlp.sequences.BestSequenceFinder;
 import edu.stanford.nlp.sequences.ExactBestSequenceFinder;
 import edu.stanford.nlp.sequences.SequenceModel;
 import edu.stanford.nlp.tagger.common.TaggerConstants;
 import edu.stanford.nlp.util.ArrayUtils;
+import edu.stanford.nlp.util.Generics;
+import edu.stanford.nlp.util.Pair;
 
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
@@ -39,6 +42,7 @@ public class TestSentence implements SequenceModel {
 
   protected final boolean VERBOSE;
   protected static final String naTag = "NA";
+  protected static final String[] naTagArr = { naTag };
   protected static final boolean DBG = false;
   protected static final int kBestSize = 1;
 
@@ -54,6 +58,7 @@ public class TestSentence implements SequenceModel {
   // protected double[][][] probabilities;
   protected String[] correctTags;
   protected String[] finalTags;
+  ArrayList<TaggedWord> result;
   int numRight;
   int numWrong;
   int numUnknown;
@@ -61,7 +66,7 @@ public class TestSentence implements SequenceModel {
   private int endSizePairs; // = 0;
 
   private volatile History history;
-  protected volatile Map<String,double[]> localScores = new HashMap<String,double[]>();
+  protected volatile Map<String,double[]> localScores = Generics.newHashMap();
   protected volatile double[][] localContextScores;
 
   protected final MaxentTagger maxentTagger;
@@ -73,34 +78,20 @@ public class TestSentence implements SequenceModel {
     if (maxentTagger.config != null) {
       tagSeparator = maxentTagger.config.getTagSeparator();
       encoding = maxentTagger.config.getEncoding();
+      VERBOSE = maxentTagger.config.getVerbose();
     } else {
       tagSeparator = TaggerConfig.getDefaultTagSeparator();
       encoding = "utf-8";
+      VERBOSE = false;
     }
     history = new History(pairs, maxentTagger.extractors);
-    VERBOSE = maxentTagger.config.getVerbose();
   }
 
-  public TestSentence(MaxentTagger maxentTagger, String[] s, String[] correctTags,
-                      PrintFile pf, Dictionary wrongWords, boolean verboseResults) {
-    this(maxentTagger);
-    if (DBG) {
-      assert(s.length == correctTags.length);
-      System.err.println("Entering TestSentence(); s.length is " + s.length + "; startSizePairs is " + endSizePairs + "; endSizePairs is " + endSizePairs);
-    }
-    this.origWords = null;
-    this.sent = new ArrayList<String>(Arrays.asList(s));
-    if (maxentTagger.wordFunction != null) {
-      for (int i = 0; i < s.length; ++i) {
-        this.sent.set(i, maxentTagger.wordFunction.apply(s[i]));
-      }
-    }
-    this.size = sent.size();
-    this.correctTags = correctTags;
-    init();
-    testTagInference(pf, wrongWords, verboseResults);
-    if (DBG) {
-      System.err.println("Exiting TestSentence(); startSizePairs is " + endSizePairs + "; endSizePairs is " + endSizePairs);
+  public void setCorrectTags(List<? extends HasTag> sentence) {
+    int len = sentence.size();
+    correctTags = new String[len];
+    for (int i = 0; i < len; i++) {
+      correctTags[i] = sentence.get(i).tag();
     }
   }
 
@@ -116,28 +107,31 @@ public class TestSentence implements SequenceModel {
     this.origWords = new ArrayList<HasWord>(s);
     int sz = s.size();
     this.sent = new ArrayList<String>(sz + 1);
-    this.originalTags = new ArrayList<String>(sz + 1);
     for (int j = 0; j < sz; j++) {
       if (maxentTagger.wordFunction != null) {
         sent.add(maxentTagger.wordFunction.apply(s.get(j).word()));
       } else {
         sent.add(s.get(j).word());
       }
-      if (reuseTags && (s.get(j) instanceof HasTag)){
-        originalTags.add(((HasTag) s.get(j)).tag());
-      } else {
-        originalTags.add(null);
-      }
     }
     sent.add(TaggerConstants.EOS_WORD);
-    originalTags.add(TaggerConstants.EOS_TAG);
+    if (reuseTags) {
+      this.originalTags = new ArrayList<String>(sz + 1);
+      for (int j = 0; j < sz; ++j) {
+        if (s.get(j) instanceof HasTag) {
+          originalTags.add(((HasTag) s.get(j)).tag());
+        } else {
+          originalTags.add(null);
+        }
+      }
+      originalTags.add(TaggerConstants.EOS_TAG);
+    }
     size = sz + 1;
     if (VERBOSE) {
-      System.err.println("Sentence is " +
-                         Sentence.listToString(sent, false, tagSeparator));
+      System.err.println("Sentence is " + Sentence.listToString(sent, false, tagSeparator));
     }
     init();
-    ArrayList<TaggedWord> result = testTagInference();
+    result = testTagInference();
     if (maxentTagger.wordFunction != null) {
       for (int j = 0; j < sz; ++j) {
         result.get(j).setWord(s.get(j).word());
@@ -235,7 +229,7 @@ public class TestSentence implements SequenceModel {
         for (int j = 0; j < tags.length; j++) {
           // score the j-th tag
           String tag = tags[j];
-          boolean approximate = maxentTagger.defaultScore > 0.0;
+          boolean approximate = maxentTagger.hasApproximateScoring();
           int tagindex = approximate ? maxentTagger.tags.getIndex(tag) : j;
           // System.err.println("Mapped from j="+ j + " " + tag + " to " + tagindex);
           probabilities[current][hyp][tagindex] = probs[j];
@@ -253,12 +247,10 @@ public class TestSentence implements SequenceModel {
    *  @param finalTags Chosen tags for sentence
    *  @param pf File to write tagged output to (can be null, then no output;
    *               at present it is non-null iff the debug property is set)
-   *  @param wrongWords Dictionary to accumulate wrong word counts in (cannot be null)
    */
-  protected void writeTagsAndErrors(String[] finalTags, PrintFile pf, Dictionary wrongWords, boolean verboseResults) {
+  protected void writeTagsAndErrors(String[] finalTags, PrintFile pf, boolean verboseResults) {
     StringWriter sw = new StringWriter(200);
-    // don't write the EOS word
-    for (int i = 0; i < correctTags.length - 1; i++) {
+    for (int i = 0; i < correctTags.length; i++) {
       sw.write(toNice(sent.get(i)));
       sw.write(tagSeparator);
       sw.write(finalTags[i]);
@@ -277,7 +269,6 @@ public class TestSentence implements SequenceModel {
           EncodingPrintWriter.err.println((maxentTagger.dict.isUnknown(sent.get(i)) ? "Unk" : "") + "Word: " + sent.get(i) + "; correct: " + correctTags[i] + "; guessed: " + finalTags[i], encoding);
         }
 
-        wrongWords.add(sent.get(i) + correctTags[i], finalTags[i]);
         if (maxentTagger.dict.isUnknown(sent.get(i))) {
           numWrongUnknown++;
           if (pf != null) pf.print("*");
@@ -290,20 +281,12 @@ public class TestSentence implements SequenceModel {
     if (verboseResults) {
       PrintWriter pw;
       try {
-        pw = new PrintWriter(new OutputStreamWriter(System.out, encoding),
-                             true);
+        pw = new PrintWriter(new OutputStreamWriter(System.out, encoding), true);
       } catch (UnsupportedEncodingException uee) {
         pw = new PrintWriter(new OutputStreamWriter(System.out), true);
       }
       pw.println(sw);
     }
-  }
-
-
-  // Test using (exact Viterbi) TagInference.
-  private void testTagInference(PrintFile pf, Dictionary wrongWords, boolean verboseResults) {
-    runTagInference();
-    writeTagsAndErrors(finalTags, pf, wrongWords, verboseResults);
   }
 
 
@@ -370,7 +353,7 @@ public class TestSentence implements SequenceModel {
   // This scores the current assignment in PairsHolder at
   // current position h.current (returns normalized scores)
   private double[] getScores(History h) {
-    if (maxentTagger.defaultScore > 0) {
+    if (maxentTagger.hasApproximateScoring()) {
       return getApproximateScores(h);
     }
     return getExactScores(h);
@@ -398,11 +381,10 @@ public class TestSentence implements SequenceModel {
     double[] scores = getHistories(tags, h); // log score for each active tag, unnormalized
 
     // Number of tags that get assigned a default score:
-    double nDefault = maxentTagger.ySize - tags.length;
+    int nDefault = maxentTagger.ySize - tags.length;
     double logScore = ArrayMath.logSum(scores);
-    double logScoreInactiveTags = Math.log(nDefault*maxentTagger.defaultScore);
-    double logTotal =
-      ArrayMath.logSum(new double[] {logScore, logScoreInactiveTags});
+    double logScoreInactiveTags = maxentTagger.getInactiveTagDefaultScore(nDefault);
+    double logTotal = SloppyMath.logAdd(logScore, logScoreInactiveTags);
     ArrayMath.addInPlace(scores, -logTotal);
 
     return scores;
@@ -428,42 +410,43 @@ public class TestSentence implements SequenceModel {
     return totalS;
   }
 
-  private double[] getHistories(String[] tags, History h, Map<Integer,Extractor> extractors, Map<Integer,Extractor> extractorsRare) {
-    if(maxentTagger.defaultScore > 0)
+  private double[] getHistories(String[] tags, History h, List<Pair<Integer,Extractor>> extractors, List<Pair<Integer,Extractor>> extractorsRare) {
+    if(maxentTagger.hasApproximateScoring())
       return getApproximateHistories(tags, h, extractors, extractorsRare);
     return getExactHistories(h, extractors, extractorsRare);
   }
 
-  private double[] getExactHistories(History h, Map<Integer,Extractor> extractors, Map<Integer,Extractor> extractorsRare) {
+  private double[] getExactHistories(History h, List<Pair<Integer,Extractor>> extractors, List<Pair<Integer,Extractor>> extractorsRare) {
     double[] scores = new double[maxentTagger.ySize];
-    FeatureKey s = new FeatureKey();
     int szCommon = maxentTagger.extractors.getSize();
 
-    for(Map.Entry<Integer,Extractor> e : extractors.entrySet()) {
-      int kf = e.getKey();
-      Extractor ex = e.getValue();
+    for (Pair<Integer,Extractor> e : extractors) {
+      int kf = e.first();
+      Extractor ex = e.second();
       String val = ex.extract(h);
-      for (int i = 0; i < maxentTagger.ySize; i++) {
-        String tag = maxentTagger.tags.getTag(i);
-        s.set(kf, val, tag);
-        int fNum = maxentTagger.getNum(s);
-        if (fNum > -1) {
-          scores[i] += maxentTagger.getLambdaSolve().lambda[fNum];
+      int[] fAssociations = maxentTagger.fAssociations.get(kf).get(val);
+      if (fAssociations != null) {
+        for (int i = 0; i < maxentTagger.ySize; i++) {
+          int fNum = fAssociations[i];
+          if (fNum > -1) {
+            scores[i] += maxentTagger.getLambdaSolve().lambda[fNum];
+          }
         }
       }
     }
-    if(extractorsRare != null) {
-      for(Map.Entry<Integer,Extractor> e : extractorsRare.entrySet()) {
-        int kf = e.getKey();
-        Extractor ex = e.getValue();
+    if (extractorsRare != null) {
+      for (Pair<Integer,Extractor> e : extractorsRare) {
+        int kf = e.first();
+        Extractor ex = e.second();
         String val = ex.extract(h);
-        for (int i = 0; i < maxentTagger.ySize; i++) {
-          String tag = maxentTagger.tags.getTag(i);
-          s.set(szCommon+kf, val, tag);
-          int fNum = maxentTagger.getNum(s);
-          if (fNum > -1) {
-            scores[i] += maxentTagger.getLambdaSolve().lambda[fNum];
-          } // end for
+        int[] fAssociations = maxentTagger.fAssociations.get(kf+szCommon).get(val);
+        if (fAssociations != null) {
+          for (int i = 0; i < maxentTagger.ySize; i++) {
+            int fNum = fAssociations[i];
+            if (fNum > -1) {
+              scores[i] += maxentTagger.getLambdaSolve().lambda[fNum];
+            }
+          }
         }
       }
     }
@@ -471,44 +454,41 @@ public class TestSentence implements SequenceModel {
   }
 
   // Returns an unnormalized score (in log space) for each tag
-  private double[] getApproximateHistories(String[] tags, History h, Map<Integer,Extractor> extractors, Map<Integer,Extractor> extractorsRare) {
+  private double[] getApproximateHistories(String[] tags, History h, List<Pair<Integer,Extractor>> extractors, List<Pair<Integer,Extractor>> extractorsRare) {
 
     double[] scores = new double[tags.length];
-    FeatureKey s = new FeatureKey();
     int szCommon = maxentTagger.extractors.getSize();
 
-    for(Map.Entry<Integer,Extractor> e : extractors.entrySet()) {
-      int kf = e.getKey();
-      Extractor ex = e.getValue();
+    for (Pair<Integer,Extractor> e : extractors) {
+      int kf = e.first();
+      Extractor ex = e.second();
       String val = ex.extract(h);
-      for (int j = 0; j < tags.length; j++) {
-        String tag = tags[j];
-        if (j == 0) {
-          s.set(kf, val, tag);
-        } else {
-          s.setTag(tag);
-        }
-        int fNum = maxentTagger.getNum(s);
-        if (fNum > -1) {
-          scores[j] += maxentTagger.getLambdaSolve().lambda[fNum];
+      int[] fAssociations = maxentTagger.fAssociations.get(kf).get(val);
+      if (fAssociations != null) {
+        for (int j = 0; j < tags.length; j++) {
+          String tag = tags[j];
+          int tagIndex = maxentTagger.tags.getIndex(tag);
+          int fNum = fAssociations[tagIndex];
+          if (fNum > -1) {
+            scores[j] += maxentTagger.getLambdaSolve().lambda[fNum];
+          }
         }
       }
     }
-    if(extractorsRare != null) {
-      for(Map.Entry<Integer,Extractor> e : extractorsRare.entrySet()) {
-        int kf = e.getKey();
-        Extractor ex = e.getValue();
+    if (extractorsRare != null) {
+      for (Pair<Integer,Extractor> e : extractorsRare) {
+        int kf = e.first();
+        Extractor ex = e.second();
         String val = ex.extract(h);
-        for (int j = 0; j < tags.length; j++) {
-          String tag = tags[j];
-          if (j == 0) {
-            s.set(szCommon+kf, val, tag);
-          } else {
-            s.setTag(tag);
-          }
-          int fNum = maxentTagger.getNum(s);
-          if (fNum > -1) {
-            scores[j] += maxentTagger.getLambdaSolve().lambda[fNum];
+        int[] fAssociations = maxentTagger.fAssociations.get(szCommon+kf).get(val);
+        if (fAssociations != null) {
+          for (int j = 0; j < tags.length; j++) {
+            String tag = tags[j];
+            int tagIndex = maxentTagger.tags.getIndex(tag);
+            int fNum = fAssociations[tagIndex];
+            if (fNum > -1) {
+              scores[j] += maxentTagger.getLambdaSolve().lambda[fNum];
+            }
           }
         }
       }
@@ -708,14 +688,13 @@ public class TestSentence implements SequenceModel {
     return getScores(history);
   }
 
+  // todo [cdm 2013]: Tagging could be sped up quite a bit here if we cached int arrays of tags by index, not Strings
   protected String[] stringTagsAt(int pos) {
-    String[] arr1;
     if ((pos < leftWindow()) || (pos >= size + leftWindow())) {
-      arr1 = new String[1];
-      arr1[0] = naTag;
-      return arr1;
+      return naTagArr;
     }
 
+    String[] arr1;
     if (originalTags != null && originalTags.get(pos - leftWindow()) != null) {
       arr1 = new String[1];
       arr1[0] = originalTags.get(pos - leftWindow());
@@ -724,7 +703,7 @@ public class TestSentence implements SequenceModel {
 
     String word = sent.get(pos - leftWindow());
     if (maxentTagger.dict.isUnknown(word)) {
-      Set<String> open = maxentTagger.tags.getOpenTags();
+      Set<String> open = maxentTagger.tags.getOpenTags();  // todo: really want array of String or int here
       arr1 = open.toArray(new String[open.size()]);
     } else {
       arr1 = maxentTagger.dict.getTags(word);

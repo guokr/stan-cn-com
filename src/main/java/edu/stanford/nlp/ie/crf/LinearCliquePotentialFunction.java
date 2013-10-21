@@ -13,10 +13,14 @@ public class LinearCliquePotentialFunction implements CliquePotentialFunction {
   }
 
   @Override
-  public double computeCliquePotential(int cliqueSize, int labelIndex, int[] cliqueFeatures) {
+  public double computeCliquePotential(int cliqueSize, int labelIndex, int[] cliqueFeatures, double[] featureVal) {
     double output = 0.0;
+    double dotProd = 0;
     for (int m = 0; m < cliqueFeatures.length; m++) {
-      output += weights[cliqueFeatures[m]][labelIndex];
+      dotProd = weights[cliqueFeatures[m]][labelIndex];
+      if (featureVal != null)
+        dotProd *= featureVal[m];
+      output += dotProd;
     }
     return output;
   }

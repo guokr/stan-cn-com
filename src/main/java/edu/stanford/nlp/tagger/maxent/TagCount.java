@@ -8,10 +8,14 @@
 
 package edu.stanford.nlp.tagger.maxent;
 
-import edu.stanford.nlp.io.OutDataStreamFile;
+import edu.stanford.nlp.io.RuntimeIOException;
+import edu.stanford.nlp.stats.IntCounter;
+import edu.stanford.nlp.util.Generics;
 
-import java.util.HashMap;
+import java.io.IOException;
+import java.util.Map;
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 
 
 /**
@@ -23,13 +27,22 @@ import java.io.DataInputStream;
  */
 class TagCount {
 
-  private HashMap<String, Integer> map = new HashMap<String, Integer>();
+  private Map<String, Integer> map = Generics.newHashMap();
   private int ambClassId = -1; /* This is a numeric ID shared by all words that have the same set of possible tags. */
 
   private String[] getTagsCache; // = null;
-  private boolean dirty = true;
+  private int sumCache;
 
-  TagCount() { }
+  private TagCount() { } // used internally
+
+  TagCount(IntCounter<String> tagCounts) {
+    for (String tag : tagCounts.keySet()) {
+      map.put(tag, tagCounts.getIntCount(tag));
+    }
+
+    getTagsCache = map.keySet().toArray(new String[map.keySet().size()]);
+    sumCache = calculateSumCache();
+  }
 
   private static final String NULL_SYMBOL = "<<NULL>>";
 
@@ -39,7 +52,7 @@ class TagCount {
    * @param rf is a file handle
    *           Supposedly other objects will be written after this one in the file. The method does not close the file. The TagCount is saved at the current position.
    */
-  protected void save(OutDataStreamFile rf) {
+  protected void save(DataOutputStream rf) {
     try {
       rf.writeInt(map.size());
       for (String tag : map.keySet()) {
@@ -64,59 +77,48 @@ class TagCount {
     return ambClassId;
   }
 
-  // The object's fields are read form the file. They are read from the current position and the
-  // file is not closed afterwards.
-  protected void read(DataInputStream rf) {
+  /** A TagCount object's fields are read from the file. They are read from
+   *  the current position and the file is not closed afterwards.
+   */
+  public static TagCount readTagCount(DataInputStream rf) {
     try {
-
+      TagCount tc = new TagCount();
       int numTags = rf.readInt();
-      map = new HashMap<String, Integer>(numTags);
+      tc.map = Generics.newHashMap(numTags);
 
       for (int i = 0; i < numTags; i++) {
 	String tag = rf.readUTF();
         int count = rf.readInt();
 
 	if (tag.equals(NULL_SYMBOL)) tag = null;
-	map.put(tag, count);
+	tc.map.put(tag, count);
       }
-      dirty = true;
-    } catch (Exception e) {
-      e.printStackTrace();
+
+      tc.getTagsCache = tc.map.keySet().toArray(new String[tc.map.keySet().size()]);
+      tc.sumCache = tc.calculateSumCache();
+      return tc;
+    } catch (IOException e) {
+      throw new RuntimeIOException(e);
     }
   }
-
-  /*
-    unused:
-  // The object is read from a file specified by its filename.
-  // Almost never used.
-  public void read(String filename) {
-    try {
-      InDataStreamFile rf = new InDataStreamFile(filename);
-      read(rf);
-      rf.close();
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-  }
-
-
-  // Prints out the information in the object to the standard output.
-  public void print() {
-    try {
-      for (String tag : map.keySet()) {
-        int count = map.get(tag);
-        System.out.print(count + " " + tag);
-      }
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-  }
-  */
 
   /**
    * @return the number of total occurrences of the word .
    */
   protected int sum() {
+    return sumCache;
+  }
+
+  // Returns the number of occurrence of a particular tag.
+  protected int get(String tag) {
+    Integer count = map.get(tag);
+    if (count == null) {
+      return 0;
+    }
+    return count;
+  }
+
+  private int calculateSumCache() {
     int s = 0;
     for (Integer i : map.values()) {
       s += i;
@@ -124,35 +126,10 @@ class TagCount {
     return s;
   }
 
-  // Add a tag to the list. If the tag is already there, increment its count.
-  // Otherwise, add it and set its count to 1.
-  protected void add(String tag) {
-    int val;
-
-    if (map.get(tag) != null) {
-      val = map.get(tag);
-    } else {
-      val = 0;
-      dirty = true;  // the set of tags has changed
-    }
-
-    map.put(tag, val + 1);
-  }
-
-  // Returns the number of occurrence of a particular tag. Not very efficient implementation.
-  protected int get(String tag) {
-    if(map.get(tag) != null) return map.get(tag);
-    else return 0;
-  }
-
   /**
    * @return an array of the tags the word has had.
    */
   public String[] getTags() {
-    if (dirty) {
-      getTagsCache = map.keySet().toArray(new String[map.keySet().size()]);
-      dirty = false;
-    }
     return getTagsCache; //map.keySet().toArray(new String[0]);
   }
 

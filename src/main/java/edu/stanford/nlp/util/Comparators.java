@@ -13,8 +13,8 @@ public class Comparators {
    * result of the second <code>Comparator</code> is returned.  Facilitates
    * sorting on primary and secondary keys.
    */
-  public static <T> Comparator<T> chain(final Comparator<T> c1,
-                                        final Comparator<T> c2) {
+  public static <T> Comparator<T> chain(final Comparator<? super T> c1,
+                                        final Comparator<? super T> c2) {
     return new Comparator<T>() {
       public int compare(T o1, T o2) {
         int x = c1.compare(o1, o2);
@@ -28,11 +28,11 @@ public class Comparators {
    * Returns a new <code>Comparator</code> which is the result of chaining the
    * given <code>Comparator</code>s.  Facilitates sorting on multiple keys.
    */
-  public static <T> Comparator<T> chain(final List<Comparator<T>> c) {
+  public static <T> Comparator<T> chain(final List<Comparator<? super T>> c) {
     return new Comparator<T>() {
       public int compare(T o1, T o2) {
         int x = 0;
-        Iterator<Comparator<T>> it = c.iterator();
+        Iterator<Comparator<? super T>> it = c.iterator();
         while (x == 0 && it.hasNext()) {
           x = it.next().compare(o1, o2);
         }
@@ -41,8 +41,21 @@ public class Comparators {
     };
   }
 
-  public static <T> Comparator<T> chain(Comparator<T>... c) {
+  public static <T> Comparator<T> chain(Comparator<? super T>... c) {
     return chain(Arrays.asList(c));
+  }
+
+  /**
+   * Returns a new <code>Comparator</code> which is the reverse of the
+   * given <code>Comparator</code>.
+   */
+  public static <T> Comparator<T> reverse(final Comparator<? super T> c) {
+    return new Comparator<T>() {
+      public int compare(T o1, T o2) {
+        int x = c.compare(o1, o2);
+        return -x;
+      }
+    };
   }
 
   /**

@@ -3,7 +3,7 @@ package edu.stanford.nlp.parser.lexparser;
 import edu.stanford.nlp.ling.CategoryWordTag;
 import edu.stanford.nlp.ling.HasTag;
 import edu.stanford.nlp.ling.Label;
-import edu.stanford.nlp.objectbank.TokenizerFactory;
+import edu.stanford.nlp.process.TokenizerFactory;
 import edu.stanford.nlp.parser.metrics.AbstractEval;
 import edu.stanford.nlp.parser.tools.PunctEquivalenceClasser;
 import edu.stanford.nlp.process.SerializableFunction;
@@ -11,7 +11,6 @@ import edu.stanford.nlp.stats.EquivalenceClasser;
 import edu.stanford.nlp.trees.*;
 import edu.stanford.nlp.trees.tregex.TregexMatcher;
 import edu.stanford.nlp.util.Filter;
-import edu.stanford.nlp.util.Function;
 import edu.stanford.nlp.util.Index;
 
 import java.io.OutputStream;
@@ -25,7 +24,7 @@ import java.util.List;
 
 /**
  * An abstract class providing a common method base from which to
- * complete a <code>TreebankLangParserParams</code> implementing class.
+ * complete a {@code TreebankLangParserParams} implementing class.
  * <p/>
  * With some extending classes you'll want to have access to special
  * attributes of the corresponding TreebankLanguagePack while taking
@@ -56,6 +55,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
 
     protected TreeFactory tf = new LabeledScoredTreeFactory();
 
+    @Override
     public Tree transformTree(Tree tree) {
       Label lab = tree.label();
       if (tree.isLeaf()) {
@@ -103,6 +103,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
 
     protected TreeFactory tf = new LabeledScoredTreeFactory();
 
+    @Override
     public Tree transformTree(Tree tree) {
       Label lab = tree.label();
       if (tree.isLeaf()) {
@@ -150,9 +151,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
     outputEncoding = tlp.getEncoding();
   }
 
-  public void setupForEval() {
-  }
-
+  @Override
   public Label processHeadWord(Label headWord) {
     return headWord;
   }
@@ -160,6 +159,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Sets whether to consider grammatical functions in evaluation
    */
+  @Override
   public void setEvaluateGrammaticalFunctions(boolean evalGFs) {
     this.evalGF = evalGFs;
   }
@@ -167,6 +167,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Sets the input encoding.
    */
+  @Override
   public void setInputEncoding(String encoding) {
     inputEncoding = encoding;
   }
@@ -174,6 +175,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Sets the output encoding.
    */
+  @Override
   public void setOutputEncoding(String encoding) {
     outputEncoding = encoding;
   }
@@ -181,6 +183,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Returns the output encoding being used.
    */
+  @Override
   public String getOutputEncoding() {
     return outputEncoding;
   }
@@ -188,6 +191,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Returns the input encoding being used.
    */
+  @Override
   public String getInputEncoding() {
     return inputEncoding;
   }
@@ -198,6 +202,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    *
    * @return An object that implements {@link AbstractEval}
    */
+  @Override
   public AbstractEval ppAttachmentEval() {
     return null;
   }
@@ -205,17 +210,20 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * returns a MemoryTreebank appropriate to the treebank source
    */
+  @Override
   public abstract MemoryTreebank memoryTreebank();
 
   /**
    * returns a DiskTreebank appropriate to the treebank source
    */
+  @Override
   public abstract DiskTreebank diskTreebank();
 
   /**
    * You can often return the same thing for testMemoryTreebank as
    * for memoryTreebank
    */
+  @Override
   public MemoryTreebank testMemoryTreebank() {
     return memoryTreebank();
   }
@@ -223,6 +231,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Implemented as required by TreebankFactory. Use diskTreebank() instead.
    */
+  @Override
   public Treebank treebank() {
     return diskTreebank();
   }
@@ -232,6 +241,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * pw to deal properly with character encodings for the relevant
    * treebank.
    */
+  @Override
   public PrintWriter pw() {
     return pw(System.out);
   }
@@ -241,22 +251,24 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * pw to deal properly with character encodings for the relevant
    * treebank.
    */
+  @Override
   public PrintWriter pw(OutputStream o) {
     String encoding = outputEncoding;
     if (!java.nio.charset.Charset.isSupported(encoding)) {
-      System.out.println("Warning: desired encoding " + encoding + " not accepted. ");
-      System.out.println("Using UTF-8 to construct PrintWriter");
+      System.err.println("Warning: desired encoding " + encoding + " not accepted. ");
+      System.err.println("Using UTF-8 to construct PrintWriter");
       encoding = "UTF-8";
     }
 
+    //System.err.println("TreebankParserParams.pw(): encoding is " + encoding);
     try {
       return new PrintWriter(new OutputStreamWriter(o, encoding), true);
     } catch (UnsupportedEncodingException e) {
-      System.out.println("Warning: desired encoding " + outputEncoding + " not accepted. " + e);
+      System.err.println("Warning: desired encoding " + outputEncoding + " not accepted. " + e);
       try {
         return new PrintWriter(new OutputStreamWriter(o, "UTF-8"), true);
       } catch (UnsupportedEncodingException e1) {
-        System.out.println("Something is really wrong.  Your system doesn't even support UTF-8!" + e1);
+        System.err.println("Something is really wrong.  Your system doesn't even support UTF-8!" + e1);
         return new PrintWriter(o, true);
       }
     }
@@ -266,6 +278,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * Returns an appropriate treebankLanguagePack
    */
+  @Override
   public TreebankLanguagePack treebankLanguagePack() {
     return tlp;
   }
@@ -273,13 +286,16 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
   /**
    * The HeadFinder to use for your treebank.
    */
+  @Override
   public abstract HeadFinder headFinder();
 
   /**
    * The HeadFinder to use when extracting typed dependencies.
    */
+  @Override
   public abstract HeadFinder typedDependencyHeadFinder();
 
+  @Override
   public Lexicon lex(Options op, Index<String> wordIndex, Index<String> tagIndex) {
     return new BaseLexicon(op, wordIndex, tagIndex);
   }
@@ -289,6 +305,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * Defaults are the ones previously hard coded into MLEDependencyGrammar.
    * @return an array of doubles with smooth_aT_hTWd, smooth_aTW_hTWd, smooth_stop, and interp
    */
+  @Override
   public double[] MLEDependencyGrammarSmoothingParams() {
     return new double[] { 16.0, 16.0, 4.0, 0.6 };
   }
@@ -400,6 +417,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
       this.hf = hf;
     }
 
+    @Override
     public List<String> makeDependency(Tree head, Tree dep, Tree root) {
       List<String> result = new ArrayList<String>(3);
       Tree headTerm = head.headTerminal(hf);
@@ -423,6 +441,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
       this.hf = hf;
     }
 
+    @Override
     public List<String> makeDependency(Tree head, Tree dep, Tree root) {
       List<String> result = new ArrayList<String>(3);
       Tree headTerm = head.headTerminal(hf);
@@ -445,6 +464,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
     }
 
 
+    @Override
     public List<String> makeDependency(Tree head, Tree dep, Tree root) {
       List<String> result = new ArrayList<String>(6);
       Tree headTerm = head.headTerminal(hf);
@@ -471,6 +491,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
       this.hf = hf;
     }
 
+    @Override
     public List<String> makeDependency(Tree head, Tree dep, Tree root) {
       List<String> result = new ArrayList<String>(6);
       Tree headTerm = head.headTerminal(hf);
@@ -493,6 +514,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    */
   public static EquivalenceClasser<List<String>, String> typedDependencyClasser() {
     return new EquivalenceClasser<List<String>, String>() {
+      @Override
       public String equivalenceClass(List<String> s) {
         if(s.get(5).equals(leftHeaded))
           return s.get(2) + '(' + s.get(3) + "->" + s.get(4) + ')';
@@ -507,6 +529,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * be applied both to the parse output tree and to the gold
    * tree. Should strip punctuation and maybe do some other things.
    */
+  @Override
   public abstract TreeTransformer collinizer();
 
   /**
@@ -516,6 +539,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * things. The evalb version should strip some more stuff
    * off. (finish this doc!)
    */
+  @Override
   public abstract TreeTransformer collinizerEvalb();
 
 
@@ -525,6 +549,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * @return An array containing ancestor-annotated Strings: categories
    *         should be split according to these ancestor annotations.
    */
+  @Override
   public abstract String[] sisterSplitters();
 
 
@@ -534,6 +559,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * categories. Removes GFs if evalGF = false; if GFs were not used
    * in training, results are equivalent.
    */
+  @Override
   public TreeTransformer subcategoryStripper() {
     if(evalGF)
       return new SubcategoryStripper();
@@ -557,11 +583,13 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * @return The fully annotated tree node (with daughters still as you
    *           want them in the final result)
    */
+  @Override
   public abstract Tree transformTree(Tree t, Tree root);
 
   /**
    * display language-specific settings
    */
+  @Override
   public abstract void display();
 
   /**
@@ -579,16 +607,19 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
    * TreebankParserParams that extend this class should call super when
    * overriding this method.
    */
+  @Override
   public int setOptionFlag(String[] args, int i) {
     return i;
   }
 
   private static final long serialVersionUID = 4299501909017975915L;
 
+  @Override
   public TokenizerFactory<Tree> treeTokenizerFactory() {
     return new TreeTokenizerFactory(treeReaderFactory());
   }
 
+  @Override
   public Extractor<DependencyGrammar> dependencyGrammarExtractor(Options op, Index<String> wordIndex, Index<String> tagIndex) {
     return new MLEDependencyGrammarExtractor(op, wordIndex, tagIndex);
   }
@@ -616,6 +647,7 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
       this.annotationMark = annotationMark;
     }
 
+    @Override
     public String apply(TregexMatcher m) {
       String punc = m.getNode(key).value();
       String punctClass = PunctEquivalenceClasser.getPunctClass(punc);
@@ -629,15 +661,26 @@ public abstract class AbstractTreebankParserParams implements TreebankLangParser
     private static final long serialVersionUID = 1L;
   }
 
+  @Override
   public List<GrammaticalStructure>
-    readGrammaticalStructureFromFile(String filename) 
+    readGrammaticalStructureFromFile(String filename)
   {
     throw new UnsupportedOperationException("This language does not support GrammaticalStructures or dependencies");
   }
 
-  public GrammaticalStructure getGrammaticalStructure(Tree t, 
-                                                      Filter<String> filter, 
+  @Override
+  public GrammaticalStructure getGrammaticalStructure(Tree t,
+                                                      Filter<String> filter,
                                                       HeadFinder hf) {
     throw new UnsupportedOperationException("This language does not support GrammaticalStructures or dependencies");
+  }
+
+  /**
+   * By default, parsers are assumed to not support dependencies.
+   * Only English and Chinese do at present.
+   */
+  @Override
+  public boolean supportsBasicDependencies() {
+    return false;
   }
 }

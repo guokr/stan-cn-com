@@ -471,7 +471,6 @@ public abstract class EntityCachingAbstractSequencePrior<IN extends CoreMap> imp
     }
     return sb.toString();
   }
-
 }
 
 class Entity {

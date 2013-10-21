@@ -15,7 +15,7 @@ import edu.stanford.nlp.util.logging.Redwood.RedwoodChannels;
  *
  * @author Teg Grenager (grenager@stanford.edu)
  */
-public class Triple<T1, T2, T3> implements Serializable, PrettyLoggable {
+public class Triple<T1, T2, T3> implements Comparable<Triple<T1,T2,T3>>, Serializable, PrettyLoggable {
 
   private static final long serialVersionUID = -4182871682751645440L;
   public T1 first;
@@ -112,5 +112,21 @@ public class Triple<T1, T2, T3> implements Serializable, PrettyLoggable {
    */
   public void prettyLog(RedwoodChannels channels, String description) {
     PrettyLogger.log(channels, description, this.asList());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public int compareTo(Triple<T1, T2, T3> another) {
+    int comp = ((Comparable<T1>) first()).compareTo(another.first());
+    if (comp != 0) {
+      return comp;
+    } else {
+      comp = ((Comparable<T2>) second()).compareTo(another.second());
+      if (comp != 0) {
+        return comp;
+      } else {
+        return ((Comparable<T3>) third()).compareTo(another.third());
+      }
+    }
   }
 }

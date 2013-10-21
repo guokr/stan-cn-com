@@ -28,13 +28,14 @@
 package edu.stanford.nlp.tagger.maxent;
 
 import edu.stanford.nlp.maxent.Experiments;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Pair;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
 import java.util.Arrays;
 
 
@@ -47,11 +48,11 @@ import java.util.Arrays;
  */
 public class TaggerExperiments extends Experiments {
 
-  private static final boolean DEBUG = false;
+  private static final boolean DEBUG = true;
   private static final String zeroSt = "0";
 
   private final TaggerFeatures feats;
-  private final Set<FeatureKey> sTemplates = new HashSet<FeatureKey>();
+  private final Set<FeatureKey> sTemplates = Generics.newHashSet();
   private final HistoryTable tHistories = new HistoryTable();
 
   private final int numFeatsGeneral;
@@ -60,6 +61,10 @@ public class TaggerExperiments extends Experiments {
   private final MaxentTagger maxentTagger;
 
   private final TemplateHash tFeature;
+
+  private byte[][] fnumArr;
+
+
 
   // This constructor is only used by unit tests.
   TaggerExperiments(MaxentTagger maxentTagger) {
@@ -70,6 +75,9 @@ public class TaggerExperiments extends Experiments {
     feats = new TaggerFeatures(maxentTagger.tags, this);
   }
 
+  /** This method gets feature statistics from a training file found in the TaggerConfig.
+   *  It is the start of the training process.
+   */
   protected TaggerExperiments(TaggerConfig config, MaxentTagger maxentTagger) throws IOException {
     this(maxentTagger);
 
@@ -93,7 +101,7 @@ public class TaggerExperiments extends Experiments {
       vArray[i][1] = indY;
 
       if (i > 0 && (i % 10000) == 0) {
-        System.err.printf("%d ",i);
+        System.err.printf("%d ", i);
         if (i % 100000 == 0) { System.err.println(); }
       }
     }
@@ -135,13 +143,17 @@ public class TaggerExperiments extends Experiments {
     return true;
   }
 
+  byte[][] getFnumArr() {
+    return fnumArr;
+  }
+
   /** This method uses and deletes a file tempXXXXXX.x in the current directory! */
   private void getFeaturesNew() {
     // todo: Change to rethrow a RuntimeIOException.
-    // todo: Move the fnumArr variable to this class. Btw, can it overflow?
+    // todo: can fnumArr overflow?
     try {
       System.err.println("TaggerExperiments.getFeaturesNew: initializing fnumArr.");
-      maxentTagger.fnumArr = new byte[xSize][ySize]; // what is the maximum number of active features
+      fnumArr = new byte[xSize][ySize]; // what is the maximum number of active features
       File hFile = File.createTempFile("temp",".x", new File("./"));
       RandomAccessFile hF = new RandomAccessFile(hFile, "rw");
       System.err.println("  length of sTemplates keys: " + sTemplates.size());
@@ -172,7 +184,7 @@ public class TaggerExperiments extends Experiments {
           if (maxentTagger.possibleTagsOnly) {
             String word = ExtractorFrames.cWord.extract(tHistories.getHistory(xValue));
             String[] tags = maxentTagger.dict.getTags(word);
-            Set<String> s = new HashSet<String>(Arrays.asList(maxentTagger.tags.deterministicallyExpandTags(tags)));
+            Set<String> s = Generics.newHashSet(Arrays.asList(maxentTagger.tags.deterministicallyExpandTags(tags)));
             if(DEBUG)
               System.err.printf("possible tags for %s: %s\n", word, Arrays.toString(s.toArray()));
             if(!s.contains(fK.tag))
@@ -203,14 +215,14 @@ public class TaggerExperiments extends Experiments {
               if(maxentTagger.possibleTagsOnly) {
                 String word = ExtractorFrames.cWord.extract(tHistories.getHistory(x));
                 String[] tags = maxentTagger.dict.getTags(word);
-                Set<String> s = new HashSet<String>(Arrays.asList(maxentTagger.tags.deterministicallyExpandTags(tags)));
+                Set<String> s = Generics.newHashSet(Arrays.asList(maxentTagger.tags.deterministicallyExpandTags(tags)));
                 if(!s.contains(fK.tag))
                   continue;
               }
               numElements++;
 
               hF.writeInt(x);
-              maxentTagger.fnumArr[x][y]++;
+              fnumArr[x][y]++;
             }
             TaggerFeature tF = new TaggerFeature(current, current + numElements - 1, fK,
                                                  maxentTagger.tags, this);
@@ -223,7 +235,7 @@ public class TaggerExperiments extends Experiments {
           } else {
 
             for(int x : xValues) {
-              maxentTagger.fnumArr[x][y]++;
+              fnumArr[x][y]++;
             }
             // this is the second time to write these values
             TaggerFeature tF = new TaggerFeature(positions[0], positions[1], fK,
@@ -234,7 +246,24 @@ public class TaggerExperiments extends Experiments {
             }
           }
 
-          maxentTagger.fAssociations.put(fK, numFeats);
+          // TODO: rearrange some of this code, such as not needing to
+          // look up the tag # in the index
+          if (maxentTagger.fAssociations.size() <= fK.num) {
+            for (int i = maxentTagger.fAssociations.size(); i <= fK.num; ++i) {
+              maxentTagger.fAssociations.add(Generics.<String, int[]>newHashMap());
+            }
+          }
+          Map<String, int[]> fValueAssociations = maxentTagger.fAssociations.get(fK.num);
+          int[] fTagAssociations = fValueAssociations.get(fK.val);
+          if (fTagAssociations == null) {
+            fTagAssociations = new int[ySize];
+            for (int i = 0; i < ySize; ++i) {
+              fTagAssociations[i] = -1;
+            }
+            fValueAssociations.put(fK.val, fTagAssociations);
+          }
+          fTagAssociations[maxentTagger.tags.getIndex(fK.tag)] = numFeats;
+
           numFeats++;
         }
 
@@ -259,10 +288,10 @@ public class TaggerExperiments extends Experiments {
       for (int x = 0; x < xSize; x++) {
         int numGt = 0;
         for (int y = 0; y < ySize; y++) {
-          if (maxentTagger.fnumArr[x][y] > 0) {
+          if (fnumArr[x][y] > 0) {
             numGt++;
-            if (max < maxentTagger.fnumArr[x][y]) {
-              max = maxentTagger.fnumArr[x][y];
+            if (max < fnumArr[x][y]) {
+              max = fnumArr[x][y];
             }
           } else {
             // if 00

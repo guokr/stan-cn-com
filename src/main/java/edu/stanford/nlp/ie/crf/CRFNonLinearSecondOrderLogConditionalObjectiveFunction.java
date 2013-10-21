@@ -14,7 +14,7 @@ import java.util.*;
  * @author Mengqiu Wang
  */
 
-public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends AbstractCachingDiffFunction {
+public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends AbstractCachingDiffFunction implements HasCliquePotentialFunction {
 
   public static final int NO_PRIOR = 0;
   public static final int QUADRATIC_PRIOR = 1;
@@ -22,8 +22,6 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
   public static final int HUBER_PRIOR = 2;
   public static final int QUARTIC_PRIOR = 3;
 
-  Index<Integer> nodeFeatureIndicesMap;
-  Index<Integer> edgeFeatureIndicesMap;
   boolean useOutputLayer;
   boolean useHiddenLayer;
   boolean useSigmoid;
@@ -35,7 +33,7 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
   protected double epsilon;
   Random random = new Random(2147483647L);
   /** label indices - for all possible label sequences - for each feature */
-  Index<CRFLabel>[] labelIndices;
+  List<Index<CRFLabel>> labelIndices;
   Index<String> classIndex;  // didn't have <String> before. Added since that's what is assumed everywhere.
   double[][] Ehat; // empirical counts of all the linear features [feature][class]
   double[][] Uhat; // empirical counts of all the output layer features [num of class][input layer size]
@@ -79,18 +77,18 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
       return HUBER_PRIOR;
     } else if ("QUARTIC".equalsIgnoreCase(priorTypeStr)) {
       return QUARTIC_PRIOR;
-    } else if ("NONE".equalsIgnoreCase(priorTypeStr)) {
+    } else if (priorTypeStr.equalsIgnoreCase("NONE")) {
       return NO_PRIOR;
     } else {
       throw new IllegalArgumentException("Unknown prior type: " + priorTypeStr);
     }
   }
 
-  CRFNonLinearSecondOrderLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index classIndex, Index[] labelIndices, int[] map, SeqClassifierFlags flags, Index<Integer> nodeFeatureIndicesMap, Index<Integer> edgeFeatureIndicesMap) {
-    this(data, labels, window, classIndex, labelIndices, map, QUADRATIC_PRIOR, flags, nodeFeatureIndicesMap, edgeFeatureIndicesMap);
+  CRFNonLinearSecondOrderLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index classIndex, List<Index<CRFLabel>> labelIndices, int[] map, SeqClassifierFlags flags, int numNodeFeatures, int numEdgeFeatures) {
+    this(data, labels, window, classIndex, labelIndices, map, QUADRATIC_PRIOR, flags, numNodeFeatures, numEdgeFeatures);
   }
 
-  CRFNonLinearSecondOrderLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index<String> classIndex, Index[] labelIndices, int[] map, int prior, SeqClassifierFlags flags, Index<Integer> nodeFeatureIndicesMap, Index<Integer> edgeFeatureIndicesMap) {
+  CRFNonLinearSecondOrderLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index<String> classIndex, List<Index<CRFLabel>> labelIndices, int[] map, int prior, SeqClassifierFlags flags, int numNodeFeatures, int numEdgeFeatures) {
     this.window = window;
     this.classIndex = classIndex;
     this.numClasses = classIndex.size();
@@ -102,15 +100,13 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
     this.prior = prior;
     this.backgroundSymbol = flags.backgroundSymbol;
     this.sigma = flags.sigma;
-    this.nodeFeatureIndicesMap = nodeFeatureIndicesMap;
-    this.edgeFeatureIndicesMap = edgeFeatureIndicesMap;
     this.outputLayerSize = numClasses;
     this.outputLayerSize4Edge = numClasses * numClasses;
     this.numHiddenUnits = flags.numHiddenUnits;
     this.inputLayerSize = numHiddenUnits * numClasses;
     this.inputLayerSize4Edge = numHiddenUnits * numClasses * numClasses;
-    this.numNodeFeatures = nodeFeatureIndicesMap.size();
-    this.numEdgeFeatures = edgeFeatureIndicesMap.size();
+    this.numNodeFeatures = numNodeFeatures;
+    this.numEdgeFeatures = numEdgeFeatures;
     this.useOutputLayer = flags.useOutputLayer;
     this.useHiddenLayer = flags.useHiddenLayer;
     this.useSigmoid = flags.useSigmoid;
@@ -130,7 +126,7 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
     if (domainDimension < 0) {
       originalFeatureCount = 0;
       for (int i = 0; i < map.length; i++) {
-        int s = labelIndices[map[i]].size();
+        int s = labelIndices.get(map[i]).size();
         originalFeatureCount += s;
       }
       domainDimension = 0;
@@ -348,6 +344,16 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
     return new Quadruple<double[][], double[][], double[][], double[][]>(inputLayerWeights4Edge, outputLayerWeights4Edge, inputLayerWeights, outputLayerWeights);
   }
 
+  public CliquePotentialFunction getCliquePotentialFunction(double[] x) {
+    Quadruple<double[][], double[][], double[][], double[][]> allParams = separateWeights(x);
+    double[][] W4Edge = allParams.first(); // inputLayerWeights4Edge
+    double[][] U4Edge = allParams.second(); // outputLayerWeights4Edge
+    double[][] W = allParams.third(); // inputLayerWeights 
+    double[][] U = allParams.fourth(); // outputLayerWeights 
+    return new NonLinearSecondOrderCliquePotentialFunction(W4Edge, U4Edge, W, U, flags);
+  }
+
+
   // todo [cdm]: Below data[m] --> docData
   /**
    * Calculates both value and partial derivatives at the point x, and save them internally.
@@ -392,9 +398,11 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
       int[][][] docData = data[m];
       int[] docLabels = labels[m];
 
+      NonLinearSecondOrderCliquePotentialFunction cliquePotentialFunction = new NonLinearSecondOrderCliquePotentialFunction(W4Edge, U4Edge, W, U, flags);
+
       // make a clique tree for this document
       CRFCliqueTree cliqueTree = CRFCliqueTree.getCalibratedCliqueTree(docData, labelIndices, numClasses, classIndex,
-        backgroundSymbol, new NonLinearSecondOrderCliquePotentialFunction(W4Edge, U4Edge, W, U, flags));
+        backgroundSymbol, cliquePotentialFunction, null);
 
       // compute the log probability of the document given the model with the parameters x
       int[] given = new int[window - 1];
@@ -430,7 +438,7 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
         System.arraycopy(windowLabels, 1, windowLabels, 0, window - 1);
         windowLabels[window - 1] = docLabels[i];
         for (int j = 0; j < docData[i].length; j++) {
-          Index<CRFLabel> labelIndex = labelIndices[j];
+          Index<CRFLabel> labelIndex = labelIndices.get(j);
           // for each possible labeling for that clique
           int[] cliqueFeatures = docData[i][j];
           double[] As = null;
@@ -442,11 +450,11 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
           if (j == 0) {
             inputSize = inputLayerSize;
             outputSize = outputLayerSize;
-            As = NonLinearCliquePotentialFunction.hiddenLayerOutput(W, cliqueFeatures, flags);
+            As = cliquePotentialFunction.hiddenLayerOutput(W, cliqueFeatures, flags, null, j+1);
           } else {
             inputSize = inputLayerSize4Edge;
             outputSize = outputLayerSize4Edge;
-            As = NonLinearCliquePotentialFunction.hiddenLayerOutput(W4Edge, cliqueFeatures, flags);
+            As = cliquePotentialFunction.hiddenLayerOutput(W4Edge, cliqueFeatures, flags, null, j+1);
           }
 
           fDeriv = new double[inputSize];
@@ -804,11 +812,12 @@ public class CRFNonLinearSecondOrderLogConditionalObjectiveFunction extends Abst
     double[][] d = new double[map.length][];
     // int index = 0;
     for (int i = 0; i < map.length; i++) {
-      d[i] = new double[labelIndices[map[i]].size()];
+      d[i] = new double[labelIndices.get(map[i]).size()];
       // cdm july 2005: below array initialization isn't necessary: JLS (3rd ed.) 4.12.5
       // Arrays.fill(d[i], 0.0);
-      // index += labelIndices[map[i]].size();
+      // index += labelIndices.get(map[i]).size();
     }
     return d;
   }
+
 }

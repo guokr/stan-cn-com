@@ -29,7 +29,6 @@
 package edu.stanford.nlp.tagger.maxent;
 
 import edu.stanford.nlp.io.IOUtils;
-import edu.stanford.nlp.io.OutDataStreamFile;
 import edu.stanford.nlp.io.PrintFile;
 import edu.stanford.nlp.io.RuntimeIOException;
 import edu.stanford.nlp.ling.*;
@@ -38,23 +37,21 @@ import edu.stanford.nlp.maxent.Problem;
 import edu.stanford.nlp.maxent.iis.LambdaSolve;
 import edu.stanford.nlp.objectbank.ObjectBank;
 import edu.stanford.nlp.objectbank.ReaderIteratorFactory;
-import edu.stanford.nlp.objectbank.TokenizerFactory;
-import edu.stanford.nlp.process.DocumentPreprocessor;
-import edu.stanford.nlp.process.ListProcessor;
-import edu.stanford.nlp.process.Morphology;
-import edu.stanford.nlp.process.TransformXML;
-import edu.stanford.nlp.process.WhitespaceTokenizer;
+import edu.stanford.nlp.process.TokenizerFactory;
+import edu.stanford.nlp.process.*;
 import edu.stanford.nlp.process.PTBTokenizer.PTBTokenizerFactory;
 import edu.stanford.nlp.sequences.PlainTextDocumentReaderAndWriter;
 import edu.stanford.nlp.sequences.PlainTextDocumentReaderAndWriter.OutputStyle;
 import edu.stanford.nlp.tagger.io.TaggedFileRecord;
 import edu.stanford.nlp.util.DataFilePaths;
 import edu.stanford.nlp.util.Function;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.ReflectionLoading;
 import edu.stanford.nlp.util.Timing;
 import edu.stanford.nlp.util.StringUtils;
 import edu.stanford.nlp.util.XMLUtils;
-
+import edu.stanford.nlp.util.concurrent.MulticoreWrapper;
+import edu.stanford.nlp.util.concurrent.ThreadsafeProcessor;
 
 import java.io.*;
 import java.util.*;
@@ -199,6 +196,7 @@ import java.text.DecimalFormat;
  * <tr><td>veryCommonWordThresh</td><td>int</td><td>250</td><td>Train</td><td>Words that occur more than this number of times form an equivalence class by themselves.  Ignored unless you are using ambiguity classes.</td></tr>
  * <tr><td>debug</td><td>boolean</td><td>boolean</td><td>All</td><td>Whether to write debugging information (words, top words, unknown words).  Useful for error analysis.</td></tr>
  * <tr><td>debugPrefix</td><td>String</td><td>N/A</td><td>All</td><td>File (path) prefix for where to write out the debugging information (relevant only if debug=true).</td></tr>
+ * <tr><td>nthreads</td><td>int</td><td>1</td><td>Test,Text</td><td>Number of threads to use when processing text.</td></tr>
  * </table>
  * <p/>
  *
@@ -210,7 +208,7 @@ import java.text.DecimalFormat;
  * @author Christopher Manning
  * @author John Bauer
  */
-public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<TaggedWord>>, ListProcessor<List<? extends HasWord>,ArrayList<TaggedWord>> {
+public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<TaggedWord>>, ListProcessor<List<? extends HasWord>,ArrayList<TaggedWord>>, Serializable {
 
   /**
    * The directory from which to get taggers when using
@@ -219,7 +217,7 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    * changed by setting the environment variable NLP_DATA_HOME.
    */
   public static final String BASE_TAGGER_HOME =
-    "$NLP_DATA_HOME/data/pos-tagger/english";
+    "$NLP_DATA_HOME/data/pos-tagger/distrib";
   public static final String TAGGER_HOME =
     DataFilePaths.convert(BASE_TAGGER_HOME);
 
@@ -243,11 +241,10 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    * the tagger options from the modelFile.
    *
    * @param modelFile filename of the trained model
-   * @throws IOException if IO problem
-   * @throws ClassNotFoundException when there are errors loading a tagger
+   * @throws RuntimeIOException if I/O errors or serialization errors
    */
-  public MaxentTagger(String modelFile) throws IOException, ClassNotFoundException {
-    this(modelFile, new TaggerConfig("-model", modelFile), true);
+  public MaxentTagger(String modelFile) {
+    this(modelFile, StringUtils.argsToProperties(new String[] {"-model", modelFile}), true);
   }
 
   /**
@@ -261,28 +258,11 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    *
    * @param modelFile filename of the trained model
    * @param config The configuration for the tagger
-   * @throws IOException if IO problem
-   * @throws ClassNotFoundException when there are errors loading a tagger
+   * @throws RuntimeIOException if I/O errors or serialization errors
    */
-  public MaxentTagger(String modelFile, TaggerConfig config)
-    throws IOException, ClassNotFoundException
-  {
+  public MaxentTagger(String modelFile, Properties config) {
     this(modelFile, config, true);
   }
-
-  /**
-   * Constructor for getting a tagger using the model path stored in the TaggerConfig.
-   *
-   * @param config The configuration for the tagger
-   * @throws IOException if IO problem
-   * @throws ClassNotFoundException when there are errors loading a tagger
-   */
-  public MaxentTagger(TaggerConfig config)
-    throws IOException, ClassNotFoundException
-  {
-    this(config.getModel(), config, true);
-  }
-
 
   /**
    * Initializer that loads the tagger.
@@ -297,28 +277,26 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    *        edu/stanford/nlp/models/pos-tagger/wsj3t0-18-bidirectional/bidirectional-distsim-wsj-0-18.tagger
    * @param config TaggerConfig based on command-line arguments
    * @param printLoading Whether to print a message saying what model file is being loaded and how long it took when finished.
-   * @throws IOException if IO problem
-   * @throws ClassNotFoundException when there are errors loading a tagger
+   * @throws RuntimeIOException if I/O errors or serialization errors
    */
-  public MaxentTagger(String modelFile, TaggerConfig config, boolean printLoading)
-    throws IOException, ClassNotFoundException
-  {
+  public MaxentTagger(String modelFile, Properties config, boolean printLoading) {
     readModelAndInit(config, modelFile, printLoading);
   }
 
 
-  final Dictionary dict = new Dictionary();
+  Dictionary dict = new Dictionary();
   TTags tags;
 
-  byte[][] fnumArr; // TODO: move this into TaggerExperiments. It could be a private method of that class with an accessor
-  LambdaSolveTagger prob;
-  HashMap<FeatureKey,Integer> fAssociations = new HashMap<FeatureKey,Integer>();
+  private LambdaSolveTagger prob;
+  // For each extractor index, we have a map from possible extracted
+  // features to an array which maps from tag number to feature weight index in the lambdas array.
+  List<Map<String, int[]>> fAssociations = new ArrayList<Map<String, int[]>>();
   //PairsHolder pairs = new PairsHolder();
   Extractors extractors;
   Extractors extractorsRare;
   AmbiguityClasses ambClasses;
   final boolean alltags = false;
-  final HashMap<String, HashSet<String>> tagTokens = new HashMap<String, HashSet<String>>();
+  final Map<String, Set<String>> tagTokens = Generics.newHashMap();
 
   static final int RARE_WORD_THRESH = Integer.valueOf(TaggerConfig.RARE_WORD_THRESH);
   static final int MIN_FEATURE_THRESH = Integer.valueOf(TaggerConfig.MIN_FEATURE_THRESH);
@@ -329,7 +307,8 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
   static final boolean OCCURRING_TAGS_ONLY = Boolean.valueOf(TaggerConfig.OCCURRING_TAGS_ONLY);
   static final boolean POSSIBLE_TAGS_ONLY = Boolean.valueOf(TaggerConfig.POSSIBLE_TAGS_ONLY);
 
-  double defaultScore;
+  private double defaultScore;
+  private double[] defaultScores = null;
 
   int leftContext;
   int rightContext;
@@ -474,6 +453,11 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
         defaultScore = config.getDefaultScore();
     }
 
+    // just in case, reset the defaultScores array so it will be
+    // recached later when needed.  can't initialize it now in case we
+    // don't know ysize yet
+    defaultScores = null;
+
     if (config == null || config.getMode() == TaggerConfig.Mode.TRAIN) {
       // initialize the extractors based on the arch variable
       // you only need to do this when training; otherwise they will be
@@ -489,6 +473,29 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     initted = true;
   }
 
+
+  private synchronized void initDefaultScores() {
+    if (defaultScores == null) {
+      defaultScores = new double[ySize + 1];
+      for (int i = 0; i < ySize + 1; ++i) {
+        defaultScores[i] = Math.log(i * defaultScore);
+      }
+    }
+  }
+
+  /**
+   * Caches a math log operation to save a tiny bit of time
+   */
+  double getInactiveTagDefaultScore(int nDefault) {
+    if (defaultScores == null) {
+      initDefaultScores();
+    }
+    return defaultScores[nDefault];
+  }
+
+  boolean hasApproximateScoring() {
+    return defaultScore > 0.0;
+  }
 
   /**
    * Figures out what tokenizer factory might be described by the
@@ -533,25 +540,24 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     }
   }
 
-  /* Package access.  Not part of public API. */
-  int getNum(FeatureKey s) {
-    Integer num = fAssociations.get(s); // hprof: 15% effective running time
-    if (num == null) {
-      return -1;
-    } else {
-      return num;
-    }
+  private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+    DataInputStream rf = new DataInputStream(in);
+    readModelAndInit(null, rf, false);
   }
 
+  private void writeObject(ObjectOutputStream out) throws IOException {
+    DataOutputStream dos = new DataOutputStream(out);
+    saveModel(dos);
+    dos.flush();
+  }
 
   // serialize the ExtractorFrames and ExtractorFramesRare in filename
   private void saveExtractors(OutputStream os) throws IOException {
 
     ObjectOutputStream out = new ObjectOutputStream(os);
-
-    System.err.println(extractors.toString() + "\nrare" + extractorsRare.toString());
     out.writeObject(extractors);
     out.writeObject(extractorsRare);
+    out.flush();
   }
 
   // Read the extractors from a filename.
@@ -593,11 +599,91 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     extractorsRare.setGlobalHolder(this);
   }
 
+  /** Removes features that never have a non-zero weight for any tag from
+   *  the fAssociations' appropriate Map.
+   */
+  private void removeDeadRules() {
+    for (Map<String, int[]> fAssociation : fAssociations) {
+      List<String> deadRules = new ArrayList<String>();
+      for (String value : fAssociation.keySet()) {
+        int[] fAssociations = fAssociation.get(value);
 
+        boolean found = false;
+        for (int index = 0; index < ySize; ++index) {
+          int fNum = fAssociations[index];
+          if (fNum > -1) {
+            if (getLambdaSolve().lambda[fNum] != 0.0) {
+              found = true;
+              break;
+            }
+          }
+        }
+        if (!found) {
+          deadRules.add(value);
+        }
+      }
 
-  protected void saveModel(String filename, TaggerConfig config) {
+      for (String rule : deadRules) {
+        fAssociation.remove(rule);
+      }
+    }
+  }
+
+  /**
+   * Searching the lambda array for 0 entries, removes them.  This
+   * saves a large chunk of space in the tagger models which are build
+   * with L1 regularization.
+   * <br>
+   * After removing the zeros, go through the feature arrays and
+   * reindex the pointers into the lambda array.  This saves some time
+   * later on at runtime.
+   */
+  private void simplifyLambda() {
+    double[] lambda = getLambdaSolve().lambda;
+    int[] map = new int[lambda.length];
+    int current = 0;
+    for (int index = 0; index < lambda.length; ++index) {
+      if (lambda[index] == 0.0) {
+        map[index] = -1;
+      } else {
+        map[index] = current;
+        current++;
+      }
+    }
+
+    double[] condensedLambda = new double[current];
+    for (int i = 0; i < lambda.length; ++i) {
+      if (map[i] != -1) {
+        condensedLambda[map[i]] = lambda[i];
+      }
+    }
+
+    for (Map<String, int[]> featureMap : fAssociations) {
+      for (String value : featureMap.keySet()) {
+        int[] fAssociations = featureMap.get(value);
+        for (int index = 0; index < ySize; ++index) {
+          if (fAssociations[index] >= 0) {
+            fAssociations[index] = map[fAssociations[index]];
+          }
+        }
+      }
+    }
+
+    prob = new LambdaSolveTagger(condensedLambda);
+  }
+
+  protected void saveModel(String filename) {
     try {
-      OutDataStreamFile file = new OutDataStreamFile(filename);
+      DataOutputStream file = IOUtils.getDataOutputStream(filename);
+      saveModel(file);
+      file.close();
+    } catch (IOException ioe) {
+      System.err.println("Error saving tagger to file " + filename);
+      throw new RuntimeIOException(ioe);
+    }
+  }
+
+  protected void saveModel(DataOutputStream file) throws IOException {
       config.saveConfig(file);
       file.writeInt(xSize);
       file.writeInt(ySize);
@@ -606,22 +692,35 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
 
       saveExtractors(file);
 
-      file.writeInt(fAssociations.size());
-      for (Map.Entry<FeatureKey,Integer> item : fAssociations.entrySet()) {
-        int numF = item.getValue();
-        file.writeInt(numF);
-        FeatureKey fk = item.getKey();
-        fk.save(file);
+      int sizeAssoc = 0;
+      for (Map<String, int[]> fValueAssociations : fAssociations) {
+        for (int[] fTagAssociations : fValueAssociations.values()) {
+          for (int association : fTagAssociations) {
+            if (association >= 0) {
+              ++sizeAssoc;
+            }
+          }
+        }
+      }
+      file.writeInt(sizeAssoc);
+      for (int i = 0; i < fAssociations.size(); ++i) {
+        Map<String, int[]> fValueAssociations = fAssociations.get(i);
+        for (Map.Entry<String, int[]> item : fValueAssociations.entrySet()) {
+          String featureValue = item.getKey();
+          int[] fTagAssociations = item.getValue();
+          for (int j = 0; j < fTagAssociations.length; ++j) {
+            int association = fTagAssociations[j];
+            if (association >= 0) {
+              file.writeInt(association);
+              FeatureKey fk = new FeatureKey(i, featureValue, tags.getTag(j));
+              fk.save(file);
+            }
+          }
+        }
       }
 
       LambdaSolve.save_lambdas(file, prob.lambda);
-      file.close();
-    } catch (IOException ioe) {
-      System.err.println("Error saving tagger to file " + filename);
-      ioe.printStackTrace();
-    }
   }
-
 
   /** This reads the complete tagger from a single model stored in a file, at a URL,
    *  or as a resource
@@ -637,19 +736,18 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    *  @param config The tagger config
    *  @param modelFileOrUrl The name of the model file. This routine opens and closes it.
    *  @param printLoading Whether to print a message saying what model file is being loaded and how long it took when finished.
-   *  @throws IOException If I/O errors, etc.
-   *  @throws ClassNotFoundException especially for incompatible tagger formats
+   *  @throws RuntimeIOException if I/O errors or serialization errors
    */
-  protected void readModelAndInit(TaggerConfig config, String modelFileOrUrl, boolean printLoading) throws IOException, ClassNotFoundException {
-    // first check can open file ... or else leave with exception
-    DataInputStream rf = new DataInputStream(IOUtils.getInputStreamFromURLOrClasspathOrFileSystem(modelFileOrUrl));
+  protected void readModelAndInit(Properties config, String modelFileOrUrl, boolean printLoading) {
+    try {
+      // first check can open file ... or else leave with exception
+      DataInputStream rf = new DataInputStream(IOUtils.getInputStreamFromURLOrClasspathOrFileSystem(modelFileOrUrl));
 
-    // if (VERBOSE) {
-    //   System.err.println(" length of model holder " + new File(modelFileOrUrl).length());
-    // }
-
-    readModelAndInit(config, rf, printLoading);
-    rf.close();
+      readModelAndInit(config, rf, printLoading);
+      rf.close();
+    } catch (IOException e) {
+      throw new RuntimeIOException("Unrecoverable error while loading a tagger model", e);
+    }
   }
 
 
@@ -666,68 +764,108 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    *  @param config The tagger config
    *  @param rf DataInputStream to read from.  It's the caller's job to open and close this stream.
    *  @param printLoading Whether to print a message saying what model file is being loaded and how long it took when finished.
-   *  @throws IOException If I/O errors
-   *  @throws ClassNotFoundException If serialization errors
+   *  @throws RuntimeIOException if I/O errors or serialization errors
    */
-  protected void readModelAndInit(TaggerConfig config, DataInputStream rf,
-                                  boolean printLoading) throws IOException, ClassNotFoundException {
-    Timing t = new Timing();
-    if (printLoading) t.doing("Reading POS tagger model from " + config.getModel());
-    // then init tagger
-    init(config);
-    TaggerConfig.readConfig(rf); // TaggerConfig in file has already been put into config in constructor of TaggerConfig, so usually just read past it.
-
-    xSize = rf.readInt();
-    ySize = rf.readInt();
-    dict.read(rf);
-
-    if (VERBOSE) {
-      System.err.println(" dictionary read ");
-    }
-    tags.read(rf);
-    readExtractors(rf);
-    dict.setAmbClasses(ambClasses, veryCommonWordThresh, tags);
-
-    int[] numFA = new int[extractors.getSize() + extractorsRare.getSize()];
-    int sizeAssoc = rf.readInt();
-    // init the Hash at the right size for efficiency (avoid resizing ops)
-    // mg2008: sizeAssoc defines the number of keys, whereas specifying
-    // sizeAssoc as argument defines an initial size.
-    // Unless load factor is >= 1, fAssociations is guaranteed to resize at least once.
-    //fAssociations = new HashMap<FeatureKey,Integer>(sizeAssoc);
-    fAssociations = new HashMap<FeatureKey,Integer>(sizeAssoc*2);
-    if (VERBOSE) System.err.printf("Reading %d feature keys...\n",sizeAssoc);
-    PrintFile pfVP = null;
-    if (VERBOSE) {
-      pfVP = new PrintFile("pairs.txt");
-    }
-    for (int i = 0; i < sizeAssoc; i++) {
-      int numF = rf.readInt();
-      FeatureKey fK = new FeatureKey();
-      fK.read(rf);
-      numFA[fK.num]++;
-      fAssociations.put(fK, numF);
-    }
-    if (VERBOSE) {
-      pfVP.close();
-    }
-    if (VERBOSE) {
-      for (int k = 0; k < numFA.length; k++) {
-        System.err.println(" Number of features of kind " + k + ' ' + numFA[k]);
+  protected void readModelAndInit(Properties config, DataInputStream rf, boolean printLoading) {
+    try {
+      Timing t = new Timing();
+      if (printLoading) {
+        String source = null;
+        if (config != null) {
+          // TODO: "model"
+          source = config.getProperty("model");
+        }
+        if (source == null) {
+          source = "data stream";
+        }
+        t.doing("Reading POS tagger model from " + source);
       }
+      TaggerConfig taggerConfig = TaggerConfig.readConfig(rf);
+      if (config != null) {
+        taggerConfig.setProperties(config);
+      }
+      // then init tagger
+      init(taggerConfig);
+
+      xSize = rf.readInt();
+      ySize = rf.readInt();
+      dict = new Dictionary();
+      dict.read(rf);
+
+      if (VERBOSE) {
+        System.err.println(" dictionary read ");
+      }
+      tags.read(rf);
+      readExtractors(rf);
+      dict.setAmbClasses(ambClasses, veryCommonWordThresh, tags);
+
+      int[] numFA = new int[extractors.getSize() + extractorsRare.getSize()];
+      int sizeAssoc = rf.readInt();
+      fAssociations = new ArrayList<Map<String, int[]>>();
+      for (int i = 0; i < extractors.getSize() + extractorsRare.getSize(); ++i) {
+        fAssociations.add(Generics.<String, int[]>newHashMap());
+      }
+      if (VERBOSE) System.err.printf("Reading %d feature keys...\n",sizeAssoc);
+      PrintFile pfVP = null;
+      if (VERBOSE) {
+        pfVP = new PrintFile("pairs.txt");
+      }
+      for (int i = 0; i < sizeAssoc; i++) {
+        int numF = rf.readInt();
+        FeatureKey fK = new FeatureKey();
+        fK.read(rf);
+        numFA[fK.num]++;
+
+        // TODO: rewrite the writing / reading code to store
+        // fAssociations in a cleaner manner?  Only do this when
+        // rebuilding all the tagger models anyway.  When we do that, we
+        // can get rid of FeatureKey
+        Map<String, int[]> fValueAssociations = fAssociations.get(fK.num);
+        int[] fTagAssociations = fValueAssociations.get(fK.val);
+        if (fTagAssociations == null) {
+          fTagAssociations = new int[ySize];
+          for (int j = 0; j < ySize; ++j) {
+            fTagAssociations[j] = -1;
+          }
+          fValueAssociations.put(fK.val, fTagAssociations);
+        }
+        fTagAssociations[tags.getIndex(fK.tag)] = numF;
+      }
+      if (VERBOSE) {
+        pfVP.close();
+      }
+      if (VERBOSE) {
+        for (int k = 0; k < numFA.length; k++) {
+          System.err.println(" Number of features of kind " + k + ' ' + numFA[k]);
+        }
+      }
+      prob = new LambdaSolveTagger(rf);
+      if (VERBOSE) {
+        System.err.println(" prob read ");
+      }
+      if (printLoading) t.done();
+    } catch (IOException e) {
+      throw new RuntimeIOException("Unrecoverable error while loading a tagger model", e);
+    } catch (ClassNotFoundException e) {
+      throw new RuntimeIOException("Unrecoverable error while loading a tagger model", e);
     }
-    prob = new LambdaSolveTagger(rf);
-    if (VERBOSE) {
-      System.err.println(" prob read ");
-    }
-    if (printLoading) t.done();
   }
 
 
   protected void dumpModel(PrintStream out) {
-    assert fAssociations.size() == prob.lambda.length;
-    for (Map.Entry<FeatureKey,Integer> fk : fAssociations.entrySet()) {
-      out.println(fk.getKey() + ": " + prob.lambda[fk.getValue()]);
+    for (int i = 0; i < fAssociations.size(); ++i) {
+      Map<String, int[]> fValueAssociations = fAssociations.get(i);
+      for (Map.Entry<String, int[]> item : fValueAssociations.entrySet()) {
+        String featureValue = item.getKey();
+        int[] fTagAssociations = item.getValue();
+        for (int j = 0; j < fTagAssociations.length; ++j) {
+          int association = fTagAssociations[j];
+          if (association >= 0) {
+            FeatureKey fk = new FeatureKey(i, featureValue, tags.getTag(j));
+            out.println(fk + ": " + association);
+          }
+        }
+      }
     }
   }
 
@@ -930,7 +1068,7 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     try {
       MaxentTagger tagger = new MaxentTagger(config.getFile(), config, false);
       System.out.println("Serialized tagger built with config:");
-      config.dump(System.out);
+      tagger.config.dump(System.out);
       tagger.dumpModel(System.out);
     } catch (Exception e) {
       e.printStackTrace();
@@ -953,10 +1091,10 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
       MaxentTagger tagger = new MaxentTagger(config.getModel(), config);
 
       Timing t = new Timing();
-      TestClassifier testClassifier = new TestClassifier(config, tagger);
+      TestClassifier testClassifier = new TestClassifier(tagger);
       long millis = t.stop();
       printErrWordsPerSec(millis, testClassifier.getNumWords());
-      testClassifier.printModelAndAccuracy(config, tagger);
+      testClassifier.printModelAndAccuracy(tagger);
     } catch (Exception e) {
       System.err.println("An error occurred while testing the tagger.");
       e.printStackTrace();
@@ -980,15 +1118,19 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
 
     TaggerExperiments samples = new TaggerExperiments(config, maxentTagger);
     TaggerFeatures feats = samples.getTaggerFeatures();
+    byte[][] fnumArr = samples.getFnumArr();
     System.err.println("Samples from " + config.getFile());
     System.err.println("Number of features: " + feats.size());
     Problem p = new Problem(samples, feats);
-    LambdaSolveTagger prob = new LambdaSolveTagger(p, 0.0001, 0.00001, maxentTagger.fnumArr);
+    LambdaSolveTagger prob = new LambdaSolveTagger(p, 0.0001, fnumArr);
     maxentTagger.prob = prob;
 
     if (config.getSearch().equals("owlqn")) {
       CGRunner runner = new CGRunner(prob, config.getModel(), config.getSigmaSquared());
       runner.solveL1(config.getRegL1());
+    } else if (config.getSearch().equals("owlqn2")) {
+      CGRunner runner = new CGRunner(prob, config.getModel(), config.getSigmaSquared());
+      runner.solveOWLQN2(config.getRegL1());
     } else if (config.getSearch().equals("cg")) {
       CGRunner runner = new CGRunner(prob, config.getModel(), config.getSigmaSquared());
       runner.solveCG();
@@ -1004,7 +1146,20 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     } else {
       System.err.println("Model is not correct");
     }
-    maxentTagger.saveModel(modelName, config);
+
+    // Some of the rules may have been optimized so they don't have
+    // any effect on the final scores.  Eliminating those rules
+    // entirely saves space and runtime
+    maxentTagger.removeDeadRules();
+
+    // If any of the features have been optimized to 0, we can remove
+    // them from the LambdaSolve.  This will save quite a bit of space
+    // depending on the optimization used
+    maxentTagger.simplifyLambda();
+
+    maxentTagger.saveModel(modelName);
+    System.err.println("Extractors list:");
+    System.err.println(maxentTagger.extractors.toString() + "\nrare" + maxentTagger.extractorsRare.toString());
   }
 
 
@@ -1014,25 +1169,21 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    * @param config Properties giving parameters for the training run
    */
   private static void runTraining(TaggerConfig config)
-    throws Exception
+    throws IOException
   {
     Date now = new Date();
 
     System.err.println("## tagger training invoked at " + now + " with arguments:");
     config.dump();
     Timing tim = new Timing();
-    try {
-      PrintFile log = new PrintFile(config.getModel() + ".props");
-      log.println("## tagger training invoked at " + now + " with arguments:");
-      config.dump(log);
-      log.close();
 
-      trainAndSaveModel(config);
-      tim.done("Training POS tagger");
-    } catch(Exception e) {
-      System.err.println("An error occurred while training a new tagger.");
-      throw e;
-    }
+    PrintFile log = new PrintFile(config.getModel() + ".props");
+    log.println("## tagger training invoked at " + now + " with arguments:");
+    config.dump(log);
+    log.close();
+
+    trainAndSaveModel(config);
+    tim.done("Training POS tagger");
   }
 
 
@@ -1061,12 +1212,8 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     private final Morphology morpha;
 
     protected TaggerWrapper(MaxentTagger tagger) {
-      this(tagger.config, tagger);
-    }
-
-    protected TaggerWrapper(TaggerConfig config, MaxentTagger tagger) {
-      this.config = config;
       this.tagger = tagger;
+      this.config = tagger.config;
 
       try {
         tokenizerFactory =
@@ -1088,45 +1235,38 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
       tagSeparator = config.getTagSeparator();
     }
 
+    @Override
     public String apply(String o) {
-      StringBuilder taggedResults = new StringBuilder();
-      TestSentence testSentence = new TestSentence(tagger);
+      StringWriter taggedResults = new StringWriter();
 
       List<List<HasWord>> sentences;
       if (tokenize) {
         sentences = tokenizeText(new StringReader(o), tokenizerFactory);
       } else {
         sentences = new ArrayList<List<HasWord>>();
-        sentences.add(Sentence.toWordList(Arrays.asList(o.split("\\s+"))));
+        sentences.add(Sentence.toWordList(o.split("\\s+")));
       }
 
-      for (List<? extends HasWord> sent : sentences) {
-        if (sent.size() > 0 && sent.get(0) instanceof CoreLabel) {
-          List<CoreLabel> coreLabels = castCoreLabels(sent);
-          tagger.tagCoreLabels(coreLabels);
-          if (outputLemmas) {
-            lemmatize(coreLabels, morpha);
+      // TODO: there is another almost identical block of code elsewhere.  Refactor
+      if (config.getNThreads() != 1) {
+        MulticoreWrapper<List<? extends HasWord>, List<? extends HasWord>> wrapper = new MulticoreWrapper<List<? extends HasWord>, List<? extends HasWord>>(config.getNThreads(), new SentenceTaggingProcessor(tagger, outputLemmas));
+        for (List<? extends HasWord> sentence : sentences) {
+          wrapper.put(sentence);
+          while (wrapper.peek()) {
+            List<? extends HasWord> taggedSentence = wrapper.poll();
+            tagger.outputTaggedSentence(taggedSentence, outputLemmas, outputStyle, outputVerbosity, sentNum++, " ", taggedResults);
           }
-          sent = coreLabels;
-        } else {
-          sent = testSentence.tagSentence(sent, false);
         }
-        switch (outputStyle) {
-        case TSV:
-          taggedResults.append(getTsvWords(outputVerbosity, outputLemmas,
-                                           sent));
-          break;
-        case XML:
-        case INLINE_XML:
-          taggedResults.append(getXMLWords(sent, sentNum++, outputLemmas));
-          break;
-        case SLASH_TAGS:
-          taggedResults.append(Sentence.listToString(sent, false,
-                                                     tagSeparator)).append(' ');
-          break;
-        default:
-          throw new IllegalArgumentException("Unsupported output style " +
-                                             outputStyle);
+        wrapper.join();
+        while (wrapper.peek()) {
+          List<? extends HasWord> taggedSentence = wrapper.poll();
+          tagger.outputTaggedSentence(taggedSentence, outputLemmas, outputStyle, outputVerbosity, sentNum++, " ", taggedResults);
+        }
+      } else {
+        for (List<? extends HasWord> sent : sentences) {
+          Morphology morpha = (outputLemmas) ? new Morphology() : null;
+          sent = tagger.tagCoreLabelsOrHasWords(sent, morpha, outputLemmas);
+          tagger.outputTaggedSentence(sent, outputLemmas, outputStyle, outputVerbosity, sentNum++, " ", taggedResults);
         }
       }
       return taggedResults.toString();
@@ -1320,7 +1460,6 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
    *
    * @param config The configuration parameters for the run.
    */
-  @SuppressWarnings({"unchecked", "UnusedDeclaration"})
   private static void runTagger(TaggerConfig config)
     throws IOException, ClassNotFoundException,
            NoSuchMethodException, IllegalAccessException,
@@ -1375,7 +1514,7 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
           TaggedFileRecord record = TaggedFileRecord.createRecord(config, filename);
           runTagger(record.reader(), writer, outputStyle);
         } else {
-          br = IOUtils.readReaderFromString(config.getFile(), config.getEncoding());
+          br = IOUtils.readerFromString(config.getFile(), config.getEncoding());
           runTagger(br, writer, config.getTagInside(), outputStyle);
         }
       } else {
@@ -1423,14 +1562,13 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
       docProcessor = new DocumentPreprocessor(new BufferedReader(new StringReader(line)));
 
       docProcessor.setTokenizerFactory(tokenizerFactory);
-      docProcessor.setEncoding(config.getEncoding());
 
       for (List<HasWord> sentence : docProcessor) {
         numWords += sentence.size();
 
         Timing t = new Timing();
-        outputSentence(sentence, outputLemmas, morpha, outputStyle,
-                       outputVerbosity, numSentences, writer);
+        tagAndOutputSentence(sentence, outputLemmas, morpha, outputStyle,
+                             outputVerbosity, numSentences, "\n", writer);
 
         totalMillis += t.stop();
         writer.newLine();
@@ -1504,7 +1642,6 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
 
     boolean outputVerbosity = config.getOutputVerbosity();
     boolean outputLemmas = config.getOutputLemmas();
-    Morphology morpha = (outputLemmas) ? new Morphology() : null;
 
     if (outputStyle == OutputStyle.XML ||
         outputStyle == OutputStyle.INLINE_XML) {
@@ -1513,13 +1650,35 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
       writer.write("<pos>\n");
     }
 
-    for (List<X> sentence : document) {
-      numWords += sentence.size();
 
-      outputSentence(sentence, outputLemmas, morpha, outputStyle,
-                     outputVerbosity, numSentences, writer);
+    if (config.getNThreads() != 1) {
+      MulticoreWrapper<List<? extends HasWord>, List<? extends HasWord>> wrapper = new MulticoreWrapper<List<? extends HasWord>, List<? extends HasWord>>(config.getNThreads(), new SentenceTaggingProcessor(this, outputLemmas));
+      for (List<X> sentence : document) {
+        wrapper.put(sentence);
+        while (wrapper.peek()) {
+          List<? extends HasWord> taggedSentence = wrapper.poll();
+          numWords += taggedSentence.size();
+          outputTaggedSentence(taggedSentence, outputLemmas, outputStyle, outputVerbosity, numSentences, "\n", writer);
+          numSentences++;
+        }
+      }
+      wrapper.join();
+      while (wrapper.peek()) {
+        List<? extends HasWord> taggedSentence = wrapper.poll();
+        numWords += taggedSentence.size();
+        outputTaggedSentence(taggedSentence, outputLemmas, outputStyle, outputVerbosity, numSentences, "\n", writer);
+        numSentences++;
+      }
+    } else {
+      Morphology morpha = (outputLemmas) ? new Morphology() : null;
+      for (List<X> sentence : document) {
+        numWords += sentence.size();
 
-      numSentences++;
+        tagAndOutputSentence(sentence, outputLemmas, morpha, outputStyle,
+                             outputVerbosity, numSentences, "\n", writer);
+
+        numSentences++;
+      }
     }
 
     if (outputStyle == OutputStyle.XML ||
@@ -1562,54 +1721,68 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
     //Now we do everything through the doc preprocessor
     final DocumentPreprocessor docProcessor;
     if (tagInside.length() > 0) {
-      docProcessor =
-        new DocumentPreprocessor(reader, DocumentPreprocessor.DocType.XML);
+      docProcessor = new DocumentPreprocessor(reader, DocumentPreprocessor.DocType.XML);
       docProcessor.setElementDelimiter(tagInside);
     } else {
       docProcessor = new DocumentPreprocessor(reader);
       docProcessor.setSentenceDelimiter(sentenceDelimiter);
     }
     docProcessor.setTokenizerFactory(tokenizerFactory);
-    docProcessor.setEncoding(config.getEncoding());
 
     runTagger(docProcessor, writer, outputStyle);
   }
 
-  public void outputSentence(List<? extends HasWord> sentence,
-                             boolean outputLemmas, Morphology morpha,
-                             OutputStyle outputStyle,
-                             boolean outputVerbosity, int numSentences,
-                             BufferedWriter writer)
-    throws IOException
-  {
+  public List<? extends HasWord> tagCoreLabelsOrHasWords(List<? extends HasWord> sentence, Morphology morpha, boolean outputLemmas) {
     if (sentence.size() > 0 && sentence.get(0) instanceof CoreLabel) {
       List<CoreLabel> coreLabels = castCoreLabels(sentence);
       tagCoreLabels(coreLabels);
       if (outputLemmas) {
+        // We may want to lemmatize things without using an existing
+        // Morphology object, as Morphology objects are not
+        // thread-safe, so we would make a new one here
+        if (morpha == null) {
+          morpha = new Morphology();
+        }
         lemmatize(coreLabels, morpha);
       }
-      sentence = coreLabels;
+      return coreLabels;
     } else {
       ArrayList<TaggedWord> taggedSentence = tagSentence(sentence, false);
-      sentence = taggedSentence;
+      return taggedSentence;
     }
+  }
 
-    switch (outputStyle) {
-    case TSV:
-      writer.write(getTsvWords(outputVerbosity, outputLemmas, sentence));
-      break;
-    case XML:
-    case INLINE_XML:
-      writeXMLSentence(writer, sentence, numSentences, outputLemmas);
-      break;
-    case SLASH_TAGS:
-      writer.write(Sentence.listToString(sentence, false,
-                                         config.getTagSeparator()));
-      writer.newLine();
-      break;
-    default:
-      throw new IllegalArgumentException("Unsupported output style " +
-                                         outputStyle);
+  public void tagAndOutputSentence(List<? extends HasWord> sentence,
+                                   boolean outputLemmas, Morphology morpha,
+                                   OutputStyle outputStyle,
+                                   boolean outputVerbosity, int numSentences,
+                                   String separator, Writer writer) {
+    sentence = tagCoreLabelsOrHasWords(sentence, morpha, outputLemmas);
+    outputTaggedSentence(sentence, outputLemmas, outputStyle, outputVerbosity, numSentences, separator, writer);
+  }
+
+  public void outputTaggedSentence(List<? extends HasWord> sentence,
+                                   boolean outputLemmas, OutputStyle outputStyle,
+                                   boolean outputVerbosity, int numSentences,
+                                   String separator, Writer writer) {
+    try {
+      switch (outputStyle) {
+      case TSV:
+        writer.write(getTsvWords(outputVerbosity, outputLemmas, sentence));
+        break;
+      case XML:
+      case INLINE_XML:
+        writeXMLSentence(writer, sentence, numSentences, outputLemmas);
+        break;
+      case SLASH_TAGS:
+        writer.write(Sentence.listToString(sentence, false, config.getTagSeparator()));
+        writer.write(separator);
+        break;
+      default:
+        throw new IllegalArgumentException("Unsupported output style " + outputStyle);
+      }
+    } catch (IOException e) {
+      throw new RuntimeIOException(e);
     }
   }
 
@@ -1637,5 +1810,29 @@ public class MaxentTagger implements Function<List<? extends HasWord>,ArrayList<
       System.err.println("Impossible: nothing to do. None of train, tag, test, or convert was specified.");
     }
   } // end main()
+
+
+  static class SentenceTaggingProcessor implements ThreadsafeProcessor<List<? extends HasWord>, List<? extends HasWord>> {
+    MaxentTagger maxentTagger;
+    boolean outputLemmas;
+
+    SentenceTaggingProcessor(MaxentTagger maxentTagger, boolean outputLemmas) {
+      this.maxentTagger = maxentTagger;
+      this.outputLemmas = outputLemmas;
+    }
+
+    @Override
+    public List<? extends HasWord> process(List<? extends HasWord> sentence) {
+      return maxentTagger.tagCoreLabelsOrHasWords(sentence, null, outputLemmas);
+    }
+
+    @Override
+    public ThreadsafeProcessor<List<? extends HasWord>, List<? extends HasWord>> newInstance() {
+      // MaxentTagger is threadsafe
+      return this;
+    }
+  }
+
+  private static final long serialVersionUID = 2;
 
 }

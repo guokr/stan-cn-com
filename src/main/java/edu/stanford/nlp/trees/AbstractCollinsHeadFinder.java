@@ -1,49 +1,55 @@
 package edu.stanford.nlp.trees;
 
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Map;
 
 /**
- * A base class for Head Finders similar to the one described in
- * Michael Collins' 1999 thesis.  For a given constituent we perform
- * <p/>
+ * A base class for a HeadFinder similar to the one described in
+ * Michael Collins' 1999 thesis.  For a given constituent we perform operations
+ * like (this is for "left" or "right":
+ * <pre>
  * for categoryList in categoryLists
- * for index = 1 to n [or n to 1 if R->L]
- * for category in categoryList
- * if category equals daughter[index] choose it.
- * <p/>
+ *   for index = 1 to n [or n to 1 if R->L]
+ *     for category in categoryList
+ *       if category equals daughter[index] choose it.
+ * </pre>
+ * <p>
  * with a final default that goes with the direction (L->R or R->L)
  * For most constituents, there will be only one category in the list,
  * the exception being, in Collins' original version, NP.
- * <p/>
+ * </p>
+ * <p>
  * It is up to the overriding base class to initialize the map
  * from constituent type to categoryLists, "nonTerminalInfo",
  * in its constructor.
  * Entries are presumed to be of type String[][].  Each String[] is a list of
  * categories, except for the first entry, which specifies direction of
- * traversal and must be one of "right", "left" or "rightdis" or "leftdis".
- * <p/>
- * "left" means search left-to-right by category and then by position
- * "leftdis" means search left-to-right by position and then by category
- * "right" means search right-to-left by category and then by position
- * "rightdis" means search right-to-left by position and then by category
- * "leftexcept" means to take the first thing from the left that isn't in the list
- * "rightexcept" means to take the first thing from the right that isn't on the list
- * <p/>
- * <p/>
- * 2002/10/28 -- Category label identity checking now uses the
+ * traversal and must be one of the following:
+ * </p>
+ * <ul>
+ * <li> "left" means search left-to-right by category and then by position
+ * <li> "leftdis" means search left-to-right by position and then by category
+ * <li> "right" means search right-to-left by category and then by position
+ * <li> "rightdis" means search right-to-left by position and then by category
+ * <li> "leftexcept" means to take the first thing from the left that isn't in the list
+ * <li> "rightexcept" means to take the first thing from the right that isn't on the list
+ * </ul>
+ * <p>
+ * Changes:
+ * </p>
+ * <ul>
+ * <li> 2002/10/28 -- Category label identity checking now uses the
  * equals() method instead of ==, so not interning category labels
  * shouldn't break things anymore.  (Roger Levy) <br>
- * 2003/02/10 -- Changed to use TreebankLanguagePack and to cut on
+ * <li> 2003/02/10 -- Changed to use TreebankLanguagePack and to cut on
  * characters that set off annotations, so this should work even if
  * functional tags are still on nodes. <br>
- * 2004/03/30 -- Made abstract base class and subclasses for CollinsHeadFinder,
+ * <li> 2004/03/30 -- Made abstract base class and subclasses for CollinsHeadFinder,
  * ModCollinsHeadFinder, SemanticHeadFinder, ChineseHeadFinder
  * (and trees.icegb.ICEGBHeadFinder, trees.international.negra.NegraHeadFinder,
  * and movetrees.EnglishPennMaxProjectionHeadFinder)
- * 2011/01/13 -- Add support for categoriesToAvoid (which can be set to ensure that
+ * <li> 2011/01/13 -- Add support for categoriesToAvoid (which can be set to ensure that
  * punctuation is not the head if there are other options)
+ * </ul>
  *
  * @author Christopher Manning
  * @author Galen Andrew
@@ -54,44 +60,47 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
   protected final TreebankLanguagePack tlp;
   protected Map<String, String[][]> nonTerminalInfo;
 
-  /** Default direction if no rule is found for category.
+  /** Default direction if no rule is found for category (the head/parent).
    *  Subclasses can turn it on if they like.
    *  If they don't it is an error if no rule is defined for a category
    *  (null is returned).
    */
   protected String[] defaultRule; // = null;
-  
+
   /** These are built automatically from categoriesToAvoid and used in a fairly
    *  different fashion from defaultRule (above).  These are used for categories
    *  that do have defined rules but where none of them have matched.  Rather
    *  than picking the rightmost or leftmost child, we will use these to pick
    *  the the rightmost or leftmost child which isn't in categoriesToAvoid.
    */
-  private String[] defaultLeftRule;
-  private String[] defaultRightRule;
-
-  protected AbstractCollinsHeadFinder(TreebankLanguagePack tlp) {
-    this.tlp = tlp;
-    setCategoriesToAvoid(new String[] {});
-  }
+  protected String[] defaultLeftRule;
+  protected String[] defaultRightRule;
 
   /**
-   * Set categories which, if it comes to last resort processing (i.e. none of
+   * Construct a HeadFinder.
+   * The TreebankLanguagePack is used to get basic categories. The remaining arguments
+   * set categories which, if it comes to last resort processing (i.e., none of
    * the rules matched), will be avoided as heads. In last resort processing,
    * it will attempt to match the leftmost or rightmost constituent not in this
    * set but will fall back to the left or rightmost constituent if necessary.
-   * 
-   * @param categoriesToAvoid list of constituent types to avoid
+   *
+   * @param tlp TreebankLanguagePack used to determine basic category
+   * @param categoriesToAvoid Constituent types to avoid as head
    */
-  protected void setCategoriesToAvoid(String[] categoriesToAvoid) {
+  protected AbstractCollinsHeadFinder(TreebankLanguagePack tlp, String... categoriesToAvoid) {
+    this.tlp = tlp;
     // automatically build defaultLeftRule, defaultRightRule
-    ArrayList<String> asList = new ArrayList<String>(Arrays.asList(categoriesToAvoid));
-    asList.add(0, "leftexcept");
-    defaultLeftRule = new String[asList.size()];
-    defaultRightRule = new String[asList.size()];
-    asList.toArray(defaultLeftRule);
-    asList.set(0, "rightexcept");
-    asList.toArray(defaultRightRule);
+    defaultLeftRule = new String[categoriesToAvoid.length + 1];
+    defaultRightRule = new String[categoriesToAvoid.length + 1];
+    if (categoriesToAvoid.length > 0) {
+      defaultLeftRule[0] = "leftexcept";
+      defaultRightRule[0] = "rightexcept";
+      System.arraycopy(categoriesToAvoid, 0, defaultLeftRule, 1, categoriesToAvoid.length);
+      System.arraycopy(categoriesToAvoid, 0, defaultRightRule, 1, categoriesToAvoid.length);
+    } else {
+      defaultLeftRule[0] = "left";
+      defaultRightRule[0] = "right";
+    }
   }
 
   /**
@@ -116,6 +125,7 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
    * @see Tree#percolateHeads(HeadFinder)
    *      for a routine to call this and spread heads throughout a tree
    */
+  @Override
   public Tree determineHead(Tree t) {
     return determineHead(t, null);
   }
@@ -131,17 +141,18 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
    * @see Tree#percolateHeads(HeadFinder)
    *      for a routine to call this and spread heads throughout a tree
    */
+  @Override
   public Tree determineHead(Tree t, Tree parent) {
     if (nonTerminalInfo == null) {
-      throw new RuntimeException("Classes derived from AbstractCollinsHeadFinder must" + " create and fill HashMap nonTerminalInfo.");
+      throw new IllegalStateException("Classes derived from AbstractCollinsHeadFinder must create and fill HashMap nonTerminalInfo.");
     }
     if (t == null || t.isLeaf()) {
-      return null;
+      throw new IllegalArgumentException("Can't return head of null or leaf Tree.");
     }
     if (DEBUG) {
       System.err.println("determineHead for " + t.value());
     }
-    
+
     Tree[] kids = t.children();
 
     Tree theHead;
@@ -170,6 +181,10 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
 
   /** Called by determineHead and may be overridden in subclasses
    *  if special treatment is necessary for particular categories.
+   *
+   *  @param t The tre to determine the head daughter of
+   *  @param parent The parent of t (or may be null)
+   *  @return The head daughter of t
    */
   protected Tree determineNonTrivialHead(Tree t, Tree parent) {
     Tree theHead = null;
@@ -191,6 +206,7 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
     //      theHead = lastDtr;
     //    } else {
     String[][] how = nonTerminalInfo.get(motherCat);
+    Tree[] kids = t.children();
     if (how == null) {
       if (DEBUG) {
         System.err.println("Warning: No rule found for " + motherCat +
@@ -201,14 +217,14 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
         if (DEBUG) {
           System.err.println("  Using defaultRule");
         }
-        return traverseLocate(t.children(), defaultRule, true);
+        return traverseLocate(kids, defaultRule, true);
       } else {
-        return null;
+        throw new IllegalArgumentException("No head rule defined for " + motherCat + " using " + this.getClass() + " in " + t);
       }
     }
     for (int i = 0; i < how.length; i++) {
       boolean lastResort = (i == how.length - 1);
-      theHead = traverseLocate(t.children(), how[i], lastResort);
+      theHead = traverseLocate(kids, how[i], lastResort);
       if (theHead != null) {
         break;
       }
@@ -221,94 +237,31 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
 
   /**
    * Attempt to locate head daughter tree from among daughters.
-   * Go through daughterTrees looking for things from a set found by
-   * looking up the motherkey specifier in a hash map, and if
-   * you do not find one, take leftmost or rightmost thing iff
+   * Go through daughterTrees looking for things from or not in a set given by
+   * the contents of the array how, and if
+   * you do not find one, take leftmost or rightmost perhaps matching thing iff
    * lastResort is true, otherwise return <code>null</code>.
    */
   protected Tree traverseLocate(Tree[] daughterTrees, String[] how, boolean lastResort) {
-    int headIdx = 0;
-    String childCat;
-    boolean found = false;
-
+    int headIdx;
     if (how[0].equals("left")) {
-      twoloop:
-        for (int i = 1; i < how.length; i++) {
-          for (headIdx = 0; headIdx < daughterTrees.length; headIdx++) {
-            childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
-            if (how[i].equals(childCat)) {
-              found = true;
-              break twoloop;
-            }
-          }
-        }
+      headIdx = findLeftHead(daughterTrees, how);
     } else if (how[0].equals("leftdis")) {
-      twoloop:
-        for (headIdx = 0; headIdx < daughterTrees.length; headIdx++) {
-          childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
-          for (int i = 1; i < how.length; i++) {
-            if (how[i].equals(childCat)) {
-              found = true;
-              break twoloop;
-            }
-          }
-        }
-    } else if (how[0].equals("right")) {
-      // from right
-      twoloop:
-        for (int i = 1; i < how.length; i++) {
-          for (headIdx = daughterTrees.length - 1; headIdx >= 0; headIdx--) {
-            childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
-            if (how[i].equals(childCat)) {
-              found = true;
-              break twoloop;
-            }
-          }
-        }
-    } else if (how[0].equals("rightdis")) {
-      // from right, but search for any, not in turn
-      twoloop:
-        for (headIdx = daughterTrees.length - 1; headIdx >= 0; headIdx--) {
-          childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
-          for (int i = 1; i < how.length; i++) {
-            if (how[i].equals(childCat)) {
-              found = true;
-              break twoloop;
-            }
-          }
-        }
+      headIdx = findLeftDisHead(daughterTrees, how);
     } else if (how[0].equals("leftexcept")) {
-      for (headIdx = 0; headIdx < daughterTrees.length; headIdx++) {
-        childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
-        found = true;
-        for (int i = 1; i < how.length; i++) {
-          if (how[i].equals(childCat)) {
-            found = false;
-          }
-        }
-        if (found) {
-          break;
-        }
-      }
+      headIdx = findLeftExceptHead(daughterTrees, how);
+    } else if (how[0].equals("right")) {
+      headIdx = findRightHead(daughterTrees, how);
+    } else if (how[0].equals("rightdis")) {
+      headIdx = findRightDisHead(daughterTrees, how);
     } else if (how[0].equals("rightexcept")) {
-      for (headIdx = daughterTrees.length - 1; headIdx >= 0; headIdx--) {
-        childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
-        found = true;
-        for (int i = 1; i < how.length; i++) {
-          if (how[i].equals(childCat)) {
-            found = false;
-          }
-        }
-        if (found) {
-          break;
-        }
-      }
+      headIdx = findRightExceptHead(daughterTrees, how);
     } else {
-      throw new RuntimeException("ERROR: invalid direction type " + how[0] + " to nonTerminalInfo map in AbstractCollinsHeadFinder.");
+      throw new IllegalStateException("ERROR: invalid direction type " + how[0] + " to nonTerminalInfo map in AbstractCollinsHeadFinder.");
     }
-    
+
     // what happens if our rule didn't match anything
-    if (!found) {
+    if (headIdx < 0) {
       if (lastResort) {
         // use the default rule to try to match anything except categoriesToAvoid
         // if that doesn't match, we'll return the left or rightmost child (by
@@ -325,25 +278,108 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
         Tree child = traverseLocate(daughterTrees, rule, false);
         if (child != null) {
           return child;
+        } else {
+          return daughterTrees[headIdx];
         }
       } else {
         // if we're not the last resort, we can return null to let the next rule try to match
         return null;
       }
     }
-    
+
     headIdx = postOperationFix(headIdx, daughterTrees);
 
     return daughterTrees[headIdx];
   }
 
+  private int findLeftHead(Tree[] daughterTrees, String[] how) {
+    for (int i = 1; i < how.length; i++) {
+      for (int headIdx = 0; headIdx < daughterTrees.length; headIdx++) {
+        String childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+
+  private int findLeftDisHead(Tree[] daughterTrees, String[] how) {
+    for (int headIdx = 0; headIdx < daughterTrees.length; headIdx++) {
+      String childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
+      for (int i = 1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+
+  private int findLeftExceptHead(Tree[] daughterTrees, String[] how) {
+    for (int headIdx = 0; headIdx < daughterTrees.length; headIdx++) {
+      String childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
+      boolean found = true;
+      for (int i = 1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          found = false;
+        }
+      }
+      if (found) {
+        return headIdx;
+      }
+    }
+    return -1;
+  }
+
+  private int findRightHead(Tree[] daughterTrees, String[] how) {
+    for (int i = 1; i < how.length; i++) {
+      for (int headIdx = daughterTrees.length - 1; headIdx >= 0; headIdx--) {
+        String childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+
+  // from right, but search for any of the categories, not by category in turn
+  private int findRightDisHead(Tree[] daughterTrees, String[] how) {
+    for (int headIdx = daughterTrees.length - 1; headIdx >= 0; headIdx--) {
+      String childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
+      for (int i = 1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+
+  private int findRightExceptHead(Tree[] daughterTrees, String[] how) {
+    for (int headIdx = daughterTrees.length - 1; headIdx >= 0; headIdx--) {
+      String childCat = tlp.basicCategory(daughterTrees[headIdx].label().value());
+      boolean found = true;
+      for (int i = 1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          found = false;
+        }
+      }
+      if (found) {
+        return headIdx;
+      }
+    }
+    return -1;
+  }
+
   /**
-   * A way for subclasses to fix any heads under special conditions
+   * A way for subclasses to fix any heads under special conditions.
    * The default does nothing.
    *
-   * @param headIdx       the index of the proposed head
-   * @param daughterTrees the array of daughter trees
-   * @return the new headIndex
+   * @param headIdx       The index of the proposed head
+   * @param daughterTrees The array of daughter trees
+   * @return The new headIndex
    */
   protected int postOperationFix(int headIdx, Tree[] daughterTrees) {
     return headIdx;

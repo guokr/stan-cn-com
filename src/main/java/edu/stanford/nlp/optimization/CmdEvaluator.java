@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
  */
 public abstract class CmdEvaluator implements Evaluator {
   private static final Pattern cmdSplitPattern = Pattern.compile("\\s+");
-  private boolean saveOutput = false;
+  protected boolean saveOutput = false;
   private String outString;
   private String errString;
   protected String description;
@@ -43,17 +43,21 @@ public abstract class CmdEvaluator implements Evaluator {
   public void evaluateCmd(String[] cmd) {
     try {
       SystemUtils.ProcessOutputStream outputStream;
+      StringWriter outSw = null;
+      StringWriter errSw = null;
       if (saveOutput) {
-        StringWriter outSw = new StringWriter();
-        StringWriter errSw = new StringWriter();
+        outSw = new StringWriter();
+        errSw = new StringWriter();
         outputStream = new SystemUtils.ProcessOutputStream(cmd, outSw, errSw);
-        outString = outSw.toString();
-        errString = errSw.toString();
       } else {
         outputStream = new SystemUtils.ProcessOutputStream(cmd, new PrintWriter(System.err));
       }
       outputToCmd(outputStream);
       outputStream.close();
+      if (saveOutput) {
+        outString = outSw.toString();
+        errString = errSw.toString();
+      }
     } catch (IOException ex) {
       throw new RuntimeException(ex);
     }

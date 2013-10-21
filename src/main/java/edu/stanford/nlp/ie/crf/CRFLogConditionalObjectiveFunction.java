@@ -2,15 +2,18 @@ package edu.stanford.nlp.ie.crf;
 
 import edu.stanford.nlp.math.ArrayMath;
 import edu.stanford.nlp.optimization.AbstractStochasticCachingDiffUpdateFunction;
+import edu.stanford.nlp.optimization.HasFeatureGrouping;
 import edu.stanford.nlp.util.Index;
 
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * @author Jenny Finkel
+ *         Mengqiu Wang
  */
 
-public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachingDiffUpdateFunction {
+public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachingDiffUpdateFunction implements HasCliquePotentialFunction, HasFeatureGrouping {
 
   public static final int NO_PRIOR = 0;
   public static final int QUADRATIC_PRIOR = 1;
@@ -22,22 +25,35 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
   private final double sigma;
   private final double epsilon = 0.1; // You can't actually set this at present
   /** label indices - for all possible label sequences - for each feature */
-  private final Index<CRFLabel>[] labelIndices;
+  private final List<Index<CRFLabel>> labelIndices;
   private final Index<String> classIndex;  // didn't have <String> before. Added since that's what is assumed everywhere.
-  private final Index featureIndex; // todo [cdm]: Unused. Remove
   private final double[][] Ehat; // empirical counts of all the features [feature][class]
   private final int window;
   private final int numClasses;
   private final int[] map;
   private final int[][][][] data;  // data[docIndex][tokenIndex][][]
+  private final double[][][][] featureVal;  // featureVal[docIndex][tokenIndex][][]
   private final int[][] labels;    // labels[docIndex][tokenIndex]
   private final int domainDimension;
+  private double[][] eHat4Update, e4Update;
 
   private int[][] weightIndices;
 
   private final String backgroundSymbol;
 
   public static boolean VERBOSE = false;
+  private double smallConst = 1e-6;
+
+  private int[][] featureGrouping = null;
+
+  @Override
+  public double[] initial() {
+    double[] initial = new double[domainDimension()];
+    for (int i = 0; i < initial.length; i++) {
+      initial[i] = generator.nextDouble() + smallConst;
+    }
+    return initial;
+  }
 
   public static int getPriorType(String priorTypeStr) {
     if (priorTypeStr == null) return QUADRATIC_PRIOR;  // default
@@ -49,40 +65,46 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
       return QUARTIC_PRIOR;
     } else if ("NONE".equalsIgnoreCase(priorTypeStr)) {
       return NO_PRIOR;
+    } else if (priorTypeStr.equalsIgnoreCase("lasso") ||
+               priorTypeStr.equalsIgnoreCase("ridge") ||
+               priorTypeStr.equalsIgnoreCase("ae-lasso") ||
+               priorTypeStr.equalsIgnoreCase("sg-lasso") ||
+               priorTypeStr.equalsIgnoreCase("g-lasso") ) {
+      return NO_PRIOR;
     } else {
       throw new IllegalArgumentException("Unknown prior type: " + priorTypeStr);
     }
   }
 
-  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, Index featureIndex, int window, Index<String> classIndex, Index[] labelIndices, int[] map, String backgroundSymbol) {
-    this(data, labels, featureIndex, window, classIndex, labelIndices, map, QUADRATIC_PRIOR, backgroundSymbol);
+  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index<String> classIndex, List<Index<CRFLabel>> labelIndices, int[] map, String backgroundSymbol) {
+    this(data, labels, window, classIndex, labelIndices, map, "QUADRATIC", backgroundSymbol);
   }
 
-  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, Index featureIndex, int window, Index<String> classIndex, Index[] labelIndices, int[] map, String backgroundSymbol, double sigma) {
-    this(data, labels, featureIndex, window, classIndex, labelIndices, map, QUADRATIC_PRIOR, backgroundSymbol, sigma);
+  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index<String> classIndex, List<Index<CRFLabel>> labelIndices, int[] map, String priorType, String backgroundSymbol) {
+    this(data, labels, window, classIndex, labelIndices, map, priorType, backgroundSymbol, 1.0, null);
   }
 
-  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, Index featureIndex, int window, Index<String> classIndex, Index[] labelIndices, int[] map, int prior, String backgroundSymbol) {
-    this(data, labels, featureIndex, window, classIndex, labelIndices, map, prior, backgroundSymbol, 1.0);
+  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index<String> classIndex, List<Index<CRFLabel>> labelIndices, int[] map, String backgroundSymbol, double sigma, double[][][][] featureVal) {
+    this(data, labels, window, classIndex, labelIndices, map, "QUADRATIC", backgroundSymbol, sigma, featureVal);
   }
 
-  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, Index featureIndex, int window, Index<String> classIndex, Index[] labelIndices, int[] map, int prior, String backgroundSymbol, double sigma) {
-    this.featureIndex = featureIndex;
+  CRFLogConditionalObjectiveFunction(int[][][][] data, int[][] labels, int window, Index<String> classIndex, List<Index<CRFLabel>> labelIndices, int[] map, String priorType, String backgroundSymbol, double sigma, double[][][][] featureVal) {
     this.window = window;
     this.classIndex = classIndex;
     this.numClasses = classIndex.size();
     this.labelIndices = labelIndices;
     this.map = map;
     this.data = data;
+    this.featureVal = featureVal;
     this.labels = labels;
-    this.prior = prior;
+    this.prior = getPriorType(priorType);
     this.backgroundSymbol = backgroundSymbol;
     this.sigma = sigma;
     Ehat = empty2D();
-    empiricalCounts(data, labels);
+    empiricalCounts(Ehat);
     int myDomainDimension = 0;
     for (int dim : map) {
-      myDomainDimension += labelIndices[dim].size();
+      myDomainDimension += labelIndices.get(dim).size();
     }
     domainDimension = myDomainDimension;
   }
@@ -96,23 +118,30 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
   /**
    * Takes a double array of weights and creates a 2D array where:
    *
-   * the first element is the mapped index of featuresIndex
-   * the second element is the index of the of the element
+   * the first element is the mapped index of the clique size (e.g., node-0, edge-1) matcing featuresIndex i
+   * the second element is the number of output classes for that clique size
    *
    * @return a 2D weight array
    */
-  public static double[][] to2D(double[] weights, Index[] labelIndices, int[] map) {
+  public static double[][] to2D(double[] weights, List<Index<CRFLabel>> labelIndices, int[] map) {
     double[][] newWeights = new double[map.length][];
     int index = 0;
     for (int i = 0; i < map.length; i++) {
-      newWeights[i] = new double[labelIndices[map[i]].size()];
-      System.arraycopy(weights, index, newWeights[i], 0, labelIndices[map[i]].size());
-      index += labelIndices[map[i]].size();
+      newWeights[i] = new double[labelIndices.get(map[i]).size()];
+      System.arraycopy(weights, index, newWeights[i], 0, labelIndices.get(map[i]).size());
+      index += labelIndices.get(map[i]).size();
     }
     return newWeights;
   }
 
   public double[][] to2D(double[] weights) {
+    return to2D(weights, this.labelIndices, this.map);
+  }
+
+  public double[][] to2D(double[] weights, double wscale) {
+    for (int i = 0; i < weights.length; i++)
+      weights[i] = weights[i] * wscale;
+
     return to2D(weights, this.labelIndices, this.map);
   }
 
@@ -136,8 +165,8 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
       weightIndices = new int[map.length][];
       int index = 0;
       for (int i = 0; i < map.length; i++) {
-        weightIndices[i] = new int[labelIndices[map[i]].size()];
-        for (int j = 0; j < labelIndices[map[i]].size(); j++) {
+        weightIndices[i] = new int[labelIndices.get(map[i]).size()];
+        for (int j = 0; j < labelIndices.get(map[i]).size(); j++) {
           weightIndices[i][j] = index;
           index++;
         }
@@ -150,47 +179,134 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     double[][] d = new double[map.length][];
     // int index = 0;
     for (int i = 0; i < map.length; i++) {
-      d[i] = new double[labelIndices[map[i]].size()];
-      // cdm july 2005: below array initialization isn't necessary: JLS (3rd ed.) 4.12.5
-      // Arrays.fill(d[i], 0.0);
-      // index += labelIndices[map[i]].size();
+      d[i] = new double[labelIndices.get(map[i]).size()];
     }
     return d;
   }
 
-  private void empiricalCounts(int[][][][] data, int[][] labels) {
+  private void empiricalCounts(double[][] eHat) {
     for (int m = 0; m < data.length; m++) {
-      int[][][] docData = data[m];
-      int[] docLabels = labels[m];
-      int[] windowLabels = new int[window];
-      Arrays.fill(windowLabels, classIndex.indexOf(backgroundSymbol));
+      empiricalCountsForADoc(eHat, m);
+    }
+  }
+      
+  private void empiricalCountsForADoc(double[][] eHat, int docIndex) {
+    int[][][] docData = data[docIndex];
+    int[] docLabels = labels[docIndex];
+    int[] windowLabels = new int[window];
+    Arrays.fill(windowLabels, classIndex.indexOf(backgroundSymbol));
+    double[][][] featureValArr = null;
+    if (featureVal != null)
+      featureValArr = featureVal[docIndex];
 
-      if (docLabels.length>docData.length) { // only true for self-training
-        // fill the windowLabel array with the extra docLabels
-        System.arraycopy(docLabels, 0, windowLabels, 0, windowLabels.length);
-        // shift the docLabels array left
-        int[] newDocLabels = new int[docData.length];
-        System.arraycopy(docLabels, docLabels.length-newDocLabels.length, newDocLabels, 0, newDocLabels.length);
-        docLabels = newDocLabels;
-      }
-      for (int i = 0; i < docData.length; i++) {
-        System.arraycopy(windowLabels, 1, windowLabels, 0, window - 1);
-        windowLabels[window - 1] = docLabels[i];
-        for (int j = 0; j < docData[i].length; j++) {
-          int[] cliqueLabel = new int[j + 1];
-          System.arraycopy(windowLabels, window - 1 - j, cliqueLabel, 0, j + 1);
-          CRFLabel crfLabel = new CRFLabel(cliqueLabel);
-          int labelIndex = labelIndices[j].indexOf(crfLabel);
-          //System.err.println(crfLabel + " " + labelIndex);
-          for (int k = 0; k < docData[i][j].length; k++) {
-            Ehat[docData[i][j][k]][labelIndex]++;
-          }
+    if (docLabels.length>docData.length) { // only true for self-training
+      // fill the windowLabel array with the extra docLabels
+      System.arraycopy(docLabels, 0, windowLabels, 0, windowLabels.length);
+      // shift the docLabels array left
+      int[] newDocLabels = new int[docData.length];
+      System.arraycopy(docLabels, docLabels.length-newDocLabels.length, newDocLabels, 0, newDocLabels.length);
+      docLabels = newDocLabels;
+    }
+    for (int i = 0; i < docData.length; i++) {
+      System.arraycopy(windowLabels, 1, windowLabels, 0, window - 1);
+      windowLabels[window - 1] = docLabels[i];
+      for (int j = 0; j < docData[i].length; j++) {
+        int[] cliqueLabel = new int[j + 1];
+        System.arraycopy(windowLabels, window - 1 - j, cliqueLabel, 0, j + 1);
+        CRFLabel crfLabel = new CRFLabel(cliqueLabel);
+        int labelIndex = labelIndices.get(j).indexOf(crfLabel);
+        //System.err.println(crfLabel + " " + labelIndex);
+        for (int n = 0; n < docData[i][j].length; n++) {
+          double fVal = 1.0;
+          if (featureValArr != null && j == 0) // j == 0 because only node features gets feature values
+            fVal = featureValArr[i][j][n];
+          eHat[docData[i][j][n]][labelIndex] += fVal;
         }
       }
     }
   }
 
-  // todo [cdm]: Below data[m] --> docData
+  public double valueForADoc(double[][] weights, int docIndex) {
+    return expectedCountsAndValueForADoc(weights, null, docIndex, true, false);
+  }
+
+  private double expectedCountsAndValueForADoc(double[][] weights, double[][] E, int docIndex) {
+    return expectedCountsAndValueForADoc(weights, E, docIndex, false, false);
+  }
+
+  private double expectedCountsForADoc(double[][] weights, double[][] E, int docIndex) {
+    return expectedCountsAndValueForADoc(weights, E, docIndex, false, true);
+  }
+
+  public CliquePotentialFunction getCliquePotentialFunction(double[] x) {
+    double[][] weights = to2D(x);
+    return new LinearCliquePotentialFunction(weights);
+  }
+
+  private double expectedCountsAndValueForADoc(double[][] weights, double[][] E, int docIndex, boolean skipExpectedCountCalc, boolean skipValCalc) {
+    double prob = 0;
+    int[][][] docData = data[docIndex];
+    int[] docLabels = labels[docIndex];
+
+    double[][][] featureVal3DArr = null;
+    if (featureVal != null)
+      featureVal3DArr = featureVal[docIndex];
+
+    CliquePotentialFunction cliquePotentialFunc = new LinearCliquePotentialFunction(weights);
+    // make a clique tree for this document
+    CRFCliqueTree cliqueTree = CRFCliqueTree.getCalibratedCliqueTree(docData, labelIndices, numClasses, classIndex, backgroundSymbol, cliquePotentialFunc, featureVal3DArr);
+
+    if (!skipValCalc) {
+      // compute the log probability of the document given the model with the parameters x
+      int[] given = new int[window - 1];
+      Arrays.fill(given, classIndex.indexOf(backgroundSymbol));
+      if (docLabels.length>docData.length) { // only true for self-training
+        // fill the given array with the extra docLabels
+        System.arraycopy(docLabels, 0, given, 0, given.length);
+        // shift the docLabels array left
+        int[] newDocLabels = new int[docData.length];
+        System.arraycopy(docLabels, docLabels.length-newDocLabels.length, newDocLabels, 0, newDocLabels.length);
+        docLabels = newDocLabels;
+      }
+
+      // iterate over the positions in this document
+      for (int i = 0; i < docData.length; i++) {
+        int label = docLabels[i];
+        double p = cliqueTree.condLogProbGivenPrevious(i, label, given);
+        if (VERBOSE) {
+          System.err.println("P(" + label + "|" + ArrayMath.toString(given) + ")=" + p);
+        }
+        prob += p;
+        System.arraycopy(given, 1, given, 0, given.length - 1);
+        given[given.length - 1] = label;
+      }
+    }
+    
+    if (!skipExpectedCountCalc) {
+      // compute the expected counts for this document, which we will need to compute the derivative
+      // iterate over the positions in this document
+      for (int i = 0; i < docData.length; i++) {
+        // for each possible clique at this position
+        for (int j = 0; j < docData[i].length; j++) {
+          Index<CRFLabel> labelIndex = labelIndices.get(j);
+          // for each possible labeling for that clique
+          for (int k = 0; k < labelIndex.size(); k++) {
+            int[] label = labelIndex.get(k).getLabel();
+            double p = cliqueTree.prob(i, label); // probability of these labels occurring in this clique with these features
+            for (int n = 0; n < docData[i][j].length; n++) {
+              double fVal = 1.0;
+              if (j == 0 && featureVal3DArr != null) // j == 0 because only node features gets feature values
+                fVal = featureVal3DArr[i][j][n];
+              E[docData[i][j][n]][k] += p * fVal;
+            }
+          }
+        }
+      }
+    }
+
+    return prob;
+  }
+
   /**
    * Calculates both value and partial derivatives at the point x, and save them internally.
    */
@@ -206,55 +322,7 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
 
     // iterate over all the documents
     for (int m = 0; m < data.length; m++) {
-      int[][][] docData = data[m];
-      int[] docLabels = labels[m];
-
-      if (docLabels.length == 0) continue;
-      
-      // make a clique tree for this document
-      CRFCliqueTree cliqueTree = CRFCliqueTree.getCalibratedCliqueTree(weights, docData, labelIndices, numClasses, classIndex, backgroundSymbol);
-
-      // compute the log probability of the document given the model with the parameters x
-      int[] given = new int[window - 1];
-      Arrays.fill(given, classIndex.indexOf(backgroundSymbol));
-      if (docLabels.length>docData.length) { // only true for self-training
-        // fill the given array with the extra docLabels
-        System.arraycopy(docLabels, 0, given, 0, given.length);
-        // shift the docLabels array left
-        int[] newDocLabels = new int[docData.length];
-        System.arraycopy(docLabels, docLabels.length-newDocLabels.length, newDocLabels, 0, newDocLabels.length);
-        docLabels = newDocLabels;
-      }
-      // iterate over the positions in this document
-      for (int i = 0; i < docData.length; i++) {
-        int label = docLabels[i];
-        double p = cliqueTree.condLogProbGivenPrevious(i, label, given);
-        if (VERBOSE) {
-          System.err.println("P(" + label + "|" + ArrayMath.toString(given) + ")=" + p);
-        }
-        prob += p;
-
-        if (given.length == 0) continue;
-        System.arraycopy(given, 1, given, 0, given.length - 1);
-        given[given.length - 1] = label;
-      }
-
-      // compute the expected counts for this document, which we will need to compute the derivative
-      // iterate over the positions in this document
-      for (int i = 0; i < data[m].length; i++) {
-        // for each possible clique at this position
-        for (int j = 0; j < data[m][i].length; j++) {
-          Index<CRFLabel> labelIndex = labelIndices[j];
-          // for each possible labeling for that clique
-          for (int k = 0; k < labelIndex.size(); k++) {
-            int[] label = labelIndex.get(k).getLabel();
-            double p = cliqueTree.prob(i, label); // probability of these labels occurring in this clique with these features
-            for (int n = 0; n < data[m][i][j].length; n++) {
-              E[data[m][i][j][n]][k] += p;
-            }
-          }
-        }
-      }
+      prob += expectedCountsAndValueForADoc(weights, E, m);
     }
 
     if (Double.isNaN(prob)) { // shouldn't be the case
@@ -262,6 +330,7 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
               " - this may well indicate numeric underflow due to overly long documents.");
     }
 
+    // because we minimize -L(\theta)
     value = -prob;
     if (VERBOSE) {
       System.err.println("value is " + value);
@@ -271,49 +340,20 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     int index = 0;
     for (int i = 0; i < E.length; i++) {
       for (int j = 0; j < E[i].length; j++) {
+        // because we minimize -L(\theta)
         derivative[index++] = (E[i][j] - Ehat[i][j]);
         if (VERBOSE) {
           System.err.println("deriv(" + i + "," + j + ") = " + E[i][j] + " - " + Ehat[i][j] + " = " + derivative[index - 1]);
         }
       }
     }
-    
-    // incorporate priors
-    if (prior == QUADRATIC_PRIOR) {
-      double sigmaSq = sigma * sigma;
-      for (int i = 0; i < x.length; i++) {
-        double k = 1.0;
-        double w = x[i];
-        value += k * w * w / 2.0 / sigmaSq;
-        derivative[i] += k * w / sigmaSq;
-      }
-    } else if (prior == HUBER_PRIOR) {
-      double sigmaSq = sigma * sigma;
-      for (int i = 0; i < x.length; i++) {
-        double w = x[i];
-        double wabs = Math.abs(w);
-        if (wabs < epsilon) {
-          value += w * w / 2.0 / epsilon / sigmaSq;
-          derivative[i] += w / epsilon / sigmaSq;
-        } else {
-          value += (wabs - epsilon / 2) / sigmaSq;
-          derivative[i] += ((w < 0.0) ? -1.0 : 1.0) / sigmaSq;
-        }
-      }
-    } else if (prior == QUARTIC_PRIOR) {
-      double sigmaQu = sigma * sigma * sigma * sigma;
-      for (int i = 0; i < x.length; i++) {
-        double k = 1.0;
-        double w = x[i];
-        value += k * w * w * w * w / 2.0 / sigmaQu;
-        derivative[i] += k * w / sigmaQu;
-      }
-    }
+
+    applyPrior(x, 1.0);
   }
 
   @Override
   public void calculateStochastic(double[] x, double [] v, int[] batch){
-    calculateStochasticGradientOnly(x,batch);
+    calculateStochasticGradientLocal(x,batch);
   }
 
   @Override
@@ -321,9 +361,7 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     return data.length;
   }
 
-
-
-  public void calculateStochasticGradientOnly(double[] x, int[] batch) {
+  private void calculateStochasticGradientLocal(double[] x, int[] batch) {
 
     double prob = 0.0; // the log prob of the sequence given the model, which is the negation of value at this point
     double[][] weights = to2D(x);
@@ -333,54 +371,9 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     // the expectations over counts
     // first index is feature index, second index is of possible labeling
     double[][] E = empty2D();
-
     // iterate over all the documents
     for (int ind : batch) {
-      int[][][] docData = data[ind];
-      int[] docLabels = labels[ind];
-
-      // make a clique tree for this document
-      CRFCliqueTree cliqueTree = CRFCliqueTree.getCalibratedCliqueTree(weights, docData, labelIndices, numClasses, classIndex, backgroundSymbol);
-
-      // compute the log probability of the document given the model with the parameters x
-      int[] given = new int[window - 1];
-      Arrays.fill(given, classIndex.indexOf(backgroundSymbol));
-      if (docLabels.length > docData.length) { // only true for self-training
-        // fill the given array with the extra docLabels
-        System.arraycopy(docLabels, 0, given, 0, given.length);
-        // shift the docLabels array left
-        int[] newDocLabels = new int[docData.length];
-        System.arraycopy(docLabels, docLabels.length - newDocLabels.length, newDocLabels, 0, newDocLabels.length);
-        docLabels = newDocLabels;
-      }
-      // iterate over the positions in this document
-      for (int i = 0; i < docData.length; i++) {
-        int label = docLabels[i];
-        double p = cliqueTree.condLogProbGivenPrevious(i, label, given);
-        if (VERBOSE) {
-          System.err.println("P(" + label + "|" + ArrayMath.toString(given) + ")=" + p);
-        }
-        prob += p;
-        System.arraycopy(given, 1, given, 0, given.length - 1);
-        given[given.length - 1] = label;
-      }
-
-      // compute the expected counts for this document, which we will need to compute the derivative
-      // iterate over the positions in this document
-      for (int i = 0; i < data[ind].length; i++) {
-        // for each possible clique at this position
-        for (int j = 0; j < data[ind][i].length; j++) {
-          Index labelIndex = labelIndices[j];
-          // for each possible labeling for that clique
-          for (int k = 0; k < labelIndex.size(); k++) {
-            int[] label = ((CRFLabel) labelIndex.get(k)).getLabel();
-            double p = cliqueTree.prob(i, label); // probability of these labels occurring in this clique with these features
-            for (int n = 0; n < data[ind][i][j].length; n++) {
-              E[data[ind][i][j][n]][k] += p;
-            }
-          }
-        }
-      }
+      prob += expectedCountsAndValueForADoc(weights, E, ind);
     }
 
     if (Double.isNaN(prob)) { // shouldn't be the case
@@ -393,6 +386,8 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     int index = 0;
     for (int i = 0; i < E.length; i++) {
       for (int j = 0; j < E[i].length; j++) {
+        // real gradient should be empirical-expected;
+        // but since we minimize -L(\theta), the gradient is -(empirial-expected)
         derivative[index++] = (E[i][j] - batchScale*Ehat[i][j]);
         if (VERBOSE) {
           System.err.println("deriv(" + i + "," + j + ") = " + E[i][j] + " - " + Ehat[i][j] + " = " + derivative[index - 1]);
@@ -400,38 +395,15 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
       }
     }
 
+    applyPrior(x, batchScale);
+  }
 
-    // incorporate priors
-    if (prior == QUADRATIC_PRIOR) {
-      double sigmaSq = sigma * sigma;
-      for (int i = 0; i < x.length; i++) {
-        double k = 1.0;
-        double w = x[i];
-        value += batchScale*k * w * w / 2.0 / sigmaSq;
-        derivative[i] += batchScale*k * w / sigmaSq;
-      }
-    } else if (prior == HUBER_PRIOR) {
-      double sigmaSq = sigma * sigma;
-      for (int i = 0; i < x.length; i++) {
-        double w = x[i];
-        double wabs = Math.abs(w);
-        if (wabs < epsilon) {
-          value += batchScale*w * w / 2.0 / epsilon / sigmaSq;
-          derivative[i] += batchScale*w / epsilon / sigmaSq;
-        } else {
-          value += batchScale*(wabs - epsilon / 2) / sigmaSq;
-          derivative[i] += batchScale*((w < 0.0) ? -1.0 : 1.0) / sigmaSq;
-        }
-      }
-    } else if (prior == QUARTIC_PRIOR) {
-      double sigmaQu = sigma * sigma * sigma * sigma;
-      for (int i = 0; i < x.length; i++) {
-        double k = 1.0;
-        double w = x[i];
-        value += batchScale*k * w * w * w * w / 2.0 / sigmaQu;
-        derivative[i] += batchScale*k * w / sigmaQu;
-      }
-    }
+  // re-inititalization is faster than Arrays.fill(arr, 0)
+  private void clearUpdateEs() {
+    for (int i = 0; i < eHat4Update.length; i++)
+      eHat4Update[i] = new double[eHat4Update[i].length];
+    for (int i = 0; i < e4Update.length; i++)
+      e4Update[i] = new double[e4Update[i].length];
   }
 
   /**
@@ -448,82 +420,48 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
   @Override
   public double calculateStochasticUpdate(double[] x, double xscale, int[] batch, double gscale) {
     double prob = 0.0; // the log prob of the sequence given the model, which is the negation of value at this point
-    int[][] wis = getWeightIndices();
+    // int[][] wis = getWeightIndices();
+    double[][] weights = to2D(x, xscale);
+
+    if (eHat4Update == null) {
+      eHat4Update = empty2D();
+      e4Update = new double[eHat4Update.length][];
+      for (int i = 0; i < e4Update.length; i++)
+        e4Update[i] = new double[eHat4Update[i].length];
+    } else {
+      clearUpdateEs();
+    }
 
     // Adjust weight by -gscale*gradient
     // gradient is expected count - empirical count
     // so we adjust by + gscale(empirical count - expected count)
 
-    int[] given = new int[window - 1];
-    int[][] docCliqueLabels = new int[window][];
-    for (int j = 0; j < window; j++) {
-      docCliqueLabels[j] = new int[j+1];
-    }
     // iterate over all the documents
     for (int ind : batch) {
-      int[][][] docData = data[ind];
-      int[] docLabels = labels[ind];
+      // clearUpdateEs();
 
-      // make a clique tree for this document
-      CRFCliqueTree cliqueTree = CRFCliqueTree.getCalibratedCliqueTree(x, xscale, wis, docData,
-              labelIndices, numClasses, classIndex, backgroundSymbol);
+      empiricalCountsForADoc(eHat4Update, ind);
+      prob += expectedCountsAndValueForADoc(weights, e4Update, ind);
 
-      // compute the log probability of the document given the model with the parameters x
-      Arrays.fill(given, classIndex.indexOf(backgroundSymbol));
-      if (docLabels.length > docData.length) { // only true for self-training
-        // fill the given array with the extra docLabels
-        System.arraycopy(docLabels, 0, given, 0, given.length);
-        // shift the docLabels array left
-        int[] newDocLabels = new int[docData.length];
-        System.arraycopy(docLabels, docLabels.length - newDocLabels.length, newDocLabels, 0, newDocLabels.length);
-        docLabels = newDocLabels;
-      }
-      // iterate over the positions in this document
-      for (int i = 0; i < docData.length; i++) {
-        int label = docLabels[i];
-        double p = cliqueTree.condLogProbGivenPrevious(i, label, given);
-        if (VERBOSE) {
-          System.err.println("P(" + label + '|' + ArrayMath.toString(given) + ")=" + p);
-        }
-        prob += p;
-
-        // Empirical count
-        for (int j = 0; j < data[ind][i].length; j++) {
-          if (j > 0) {
-            System.arraycopy(given, window - j - 1, docCliqueLabels[j], 0, j);
-          }
-          docCliqueLabels[j][j] = label;
-          // TODO: We can eliminate this lookup by saving the correctLabelIndex (or marking it in CRFLabel)
-          CRFLabel crfLabel = new CRFLabel(docCliqueLabels[j]);
-          int correctLabelIndex = labelIndices[j].indexOf(crfLabel);
-          for (int n = 0; n < data[ind][i][j].length; n++) {
-            // Adjust by gscale (empirical count)
-            x[wis[data[ind][i][j][n]][correctLabelIndex]] += gscale;
-          }
-        }
-        // Shift window over
-        System.arraycopy(given, 1, given, 0, given.length - 1);
-        given[given.length - 1] = label;
-      }
-
-      // compute the expected counts for this document, which we will need to compute the derivative
-      // iterate over the positions in this document
+      /* the commented out code below is to iterate over the batch docs instead of iterating over all
+         parameters at the end, which is more efficient; but it would also require us to clearUpdateEs()
+         for each document, which is likely to out-weight the cost of iterating over params once at the end
+      
       for (int i = 0; i < data[ind].length; i++) {
         // for each possible clique at this position
         for (int j = 0; j < data[ind][i].length; j++) {
-          // Expected count
-          Index labelIndex = labelIndices[j];
+          Index labelIndex = labelIndices.get(j);
           // for each possible labeling for that clique
           for (int k = 0; k < labelIndex.size(); k++) {
-            int[] label = ((CRFLabel) labelIndex.get(k)).getLabel();
-            double p = cliqueTree.prob(i, label); // probability of these labels occurring in this clique with these features
             for (int n = 0; n < data[ind][i][j].length; n++) {
-              // Adjust weight by -p*gscale (expected count scaled)
-              x[wis[docData[i][j][n]][k]] -= p * gscale;
+              // Adjust weight by (eHat-e)*gscale (empirical count minus expected count scaled)
+              int fIndex = docData[i][j][n];
+              x[wis[fIndex][k]] += (eHat4Update[fIndex][k] - e4Update[fIndex][k]) * gscale;
             }
           }
         }
       }
+      */
     }
 
     if (Double.isNaN(prob)) { // shouldn't be the case
@@ -531,7 +469,85 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     }
 
     value = -prob;
+
+    int index = 0;
+    for (int i = 0; i < e4Update.length; i++) {
+      for (int j = 0; j < e4Update[i].length; j++) {
+        // real gradient should be empirical-expected;
+        // but since we minimize -L(\theta), the gradient is -(empirial-expected)
+        // the update to x(t) = x(t-1) - g(t), and thereofre is --(empirical-expected) = (empirical-expected)
+        x[index++] += (eHat4Update[i][j] - e4Update[i][j]) * gscale;
+      }
+    }
+     
     return value;
+  }
+
+  /**
+   * Performs stochastic gradient update based
+   * on samples indexed by batch, but does not apply regularization.
+   *
+   * @param x - unscaled weights
+   * @param batch - indices of which samples to compute function over
+   */
+  @Override
+  public void calculateStochasticGradient(double[] x, int[] batch) {
+    if (derivative == null) {
+      derivative = new double[domainDimension()];
+    }
+    // int[][] wis = getWeightIndices();
+    double[][] weights = to2D(x, 1.0);
+
+    if (eHat4Update == null) {
+      eHat4Update = empty2D();
+      e4Update = new double[eHat4Update.length][];
+      for (int i = 0; i < e4Update.length; i++)
+        e4Update[i] = new double[eHat4Update[i].length];
+    } else {
+      clearUpdateEs();
+    }
+
+    // Adjust weight by -gscale*gradient
+    // gradient is expected count - empirical count
+    // so we adjust by + gscale(empirical count - expected count)
+
+    // iterate over all the documents
+    for (int ind : batch) {
+      // clearUpdateEs();
+
+      empiricalCountsForADoc(eHat4Update, ind);
+      expectedCountsForADoc(weights, e4Update, ind);
+
+      /* the commented out code below is to iterate over the batch docs instead of iterating over all
+         parameters at the end, which is more efficient; but it would also require us to clearUpdateEs()
+         for each document, which is likely to out-weight the cost of iterating over params once at the end
+      
+      for (int i = 0; i < data[ind].length; i++) {
+        // for each possible clique at this position
+        for (int j = 0; j < data[ind][i].length; j++) {
+          Index labelIndex = labelIndices.get(j);
+          // for each possible labeling for that clique
+          for (int k = 0; k < labelIndex.size(); k++) {
+            for (int n = 0; n < data[ind][i][j].length; n++) {
+              // Adjust weight by (eHat-e)*gscale (empirical count minus expected count scaled)
+              int fIndex = docData[i][j][n];
+              x[wis[fIndex][k]] += (eHat4Update[fIndex][k] - e4Update[fIndex][k]) * gscale;
+            }
+          }
+        }
+      }
+      */
+    }
+
+    int index = 0;
+    for (int i = 0; i < e4Update.length; i++) {
+      for (int j = 0; j < e4Update[i].length; j++) {
+        // real gradient should be empirical-expected;
+        // but since we minimize -L(\theta), the gradient is -(empirial-expected)
+        // the update to x(t) = x(t-1) - g(t), and thereofre is --(empirical-expected) = (empirical-expected)
+        derivative[index++] = (-eHat4Update[i][j] + e4Update[i][j]);
+      }
+    }
   }
 
   /**
@@ -547,46 +563,12 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
   @Override
   public double valueAt(double[] x, double xscale, int[] batch) {
     double prob = 0; // the log prob of the sequence given the model, which is the negation of value at this point
-    int[][] wis = getWeightIndices();
+    // int[][] wis = getWeightIndices();
+    double[][] weights = to2D(x, xscale);
 
-    int[] given = new int[window - 1];
-    int[][] docCliqueLabels = new int[window][];
-    for (int j = 0; j < window; j++) {
-      docCliqueLabels[j] = new int[j+1];
-    }
     // iterate over all the documents
     for (int ind : batch) {
-      int[][][] docData = data[ind];
-      int[] docLabels = labels[ind];
-
-      // make a clique tree for this document
-      CRFCliqueTree cliqueTree = CRFCliqueTree.getCalibratedCliqueTree(x, xscale, wis, docData,
-              labelIndices, numClasses, classIndex, backgroundSymbol);
-
-      // compute the log probability of the document given the model with the parameters x
-      Arrays.fill(given, classIndex.indexOf(backgroundSymbol));
-      if (docLabels.length > docData.length) { // only true for self-training
-        // fill the given array with the extra docLabels
-        System.arraycopy(docLabels, 0, given, 0, given.length);
-        // shift the docLabels array left
-        int[] newDocLabels = new int[docData.length];
-        System.arraycopy(docLabels, docLabels.length - newDocLabels.length, newDocLabels, 0, newDocLabels.length);
-        docLabels = newDocLabels;
-      }
-      // iterate over the positions in this document
-      for (int i = 0; i < docData.length; i++) {
-        int label = docLabels[i];
-        double p = cliqueTree.condLogProbGivenPrevious(i, label, given);
-        if (VERBOSE) {
-          System.err.println("P(" + label + '|' + ArrayMath.toString(given) + ")=" + p);
-        }
-        prob += p;
-
-        // Shift window over
-        System.arraycopy(given, 1, given, 0, given.length - 1);
-        given[given.length - 1] = label;
-      }
-
+      prob += valueForADoc(weights, ind);
     }
 
     if (Double.isNaN(prob)) { // shouldn't be the case
@@ -596,4 +578,55 @@ public class CRFLogConditionalObjectiveFunction extends AbstractStochasticCachin
     value = -prob;
     return value;
   }
+
+  @Override
+  public int[][] getFeatureGrouping() {
+    if (featureGrouping != null)
+      return featureGrouping;
+    else {
+      int[][] fg = new int[1][];
+      fg[0] = ArrayMath.range(0, domainDimension());
+      return fg;
+    }
+  }
+
+  public void setFeatureGrouping(int[][] fg) {
+    this.featureGrouping = fg;
+  }
+
+  private void applyPrior(double[] x, double batchScale) {
+    // incorporate priors
+    if (prior == QUADRATIC_PRIOR) {
+      double sigmaSq = sigma * sigma;
+      double lambda = 1 / 2.0 / sigmaSq;
+      for (int i = 0; i < x.length; i++) {
+        double w = x[i];
+        value += batchScale * w * w * lambda;
+        derivative[i] += batchScale * w / sigmaSq;
+      }
+    } else if (prior == HUBER_PRIOR) {
+      double sigmaSq = sigma * sigma;
+      for (int i = 0; i < x.length; i++) {
+        double w = x[i];
+        double wabs = Math.abs(w);
+        if (wabs < epsilon) {
+          value += batchScale*w * w / 2.0 / epsilon / sigmaSq;
+          derivative[i] += batchScale*w / epsilon / sigmaSq;
+        } else {
+          value += batchScale*(wabs - epsilon / 2) / sigmaSq;
+          derivative[i] += batchScale*((w < 0.0) ? -1.0 : 1.0) / sigmaSq;
+        }
+      }
+    } else if (prior == QUARTIC_PRIOR) {
+      double sigmaQu = sigma * sigma * sigma * sigma;
+      double lambda = 1 / 2.0 / sigmaQu;
+      for (int i = 0; i < x.length; i++) {
+        double w = x[i];
+        value += batchScale * w * w * w * w * lambda;
+        derivative[i] += batchScale * w / sigmaQu;
+      }
+    }
+  }
+
+
 }

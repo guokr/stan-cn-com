@@ -44,11 +44,16 @@ public class StochasticInPlaceMinimizer<T extends Function> implements Minimizer
 
   public StochasticInPlaceMinimizer(double sigma, int numPasses)
   {
-    this(sigma, numPasses, -1);
+    this(sigma, numPasses, -1, 1);
   }
 
-  public StochasticInPlaceMinimizer(double sigma, int numPasses, int tuningSamples)
+  public StochasticInPlaceMinimizer(double sigma, int numPasses, int tuningSamples) {
+    this(sigma, numPasses, tuningSamples, 1);
+  }
+
+  public StochasticInPlaceMinimizer(double sigma, int numPasses, int tuningSamples, int batchSize)
   {
+    this.bSize = batchSize;
     this.sigma = sigma;
     if (numPasses >= 0) {
       this.numPasses = numPasses;
@@ -238,7 +243,8 @@ public class StochasticInPlaceMinimizer<T extends Function> implements Minimizer
     }
     lambda = 1.0/(sigma*totalSamples);
     sayln("Using sigma=" + sigma + " lambda=" + lambda + " tuning sample size " + tuneSampleSize);
-    tune(function, initial, tuneSampleSize, 0.1);
+    // tune(function, initial, tuneSampleSize, 0.1);
+    t0 = (int) (1 / (0.1 * lambda));
 
     x = new double[initial.length];
     System.arraycopy(initial, 0, x, 0, x.length);

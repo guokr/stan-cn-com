@@ -55,7 +55,7 @@ public class IOUtils {
   }
 
   /**
-   * Write an object to a specified File.
+   * Write an object to a specified File. The file is silently gzipped regardless of name.
    *
    * @param o Object to be written to file
    * @param file The temp File
@@ -130,6 +130,14 @@ public class IOUtils {
     }
   }
 
+  private static OutputStream getBufferedOutputStream(String path) throws IOException {
+    OutputStream os = new BufferedOutputStream(new FileOutputStream(path));
+    if (path.endsWith(".gz")) {
+      os = new GZIPOutputStream(os);
+    }
+    return os;
+  }
+
   //++ todo [cdm, Aug 2012]: None of the methods below in this block are used. Delete them all?
   //++ They're also kind of weird in unnecessarily bypassing using a Writer.
 
@@ -142,12 +150,7 @@ public class IOUtils {
    * @throws IOException In case of failure
    */
   public static void writeStringToFile(String contents, String path, String encoding) throws IOException {
-    OutputStream writer;
-    if (path.endsWith(".gz")) {
-      writer = new GZIPOutputStream(new FileOutputStream(path));
-    } else {
-      writer = new BufferedOutputStream(new FileOutputStream(path));
-    }
+    OutputStream writer = getBufferedOutputStream(path);
     writer.write(contents.getBytes(encoding));
     writer.close();
   }
@@ -256,7 +259,7 @@ public class IOUtils {
 
 
   /**
-   * Read an object from a stored file.
+   * Read an object from a stored file. It is silently ungzipped, regardless of name.
    *
    * @param file The file pointing to the object to be retrieved
    * @throws IOException If file cannot be read
@@ -270,6 +273,14 @@ public class IOUtils {
     Object o = ois.readObject();
     ois.close();
     return ErasureUtils.uncheckedCast(o);
+  }
+
+  public static DataInputStream getDataInputStream(String filenameUrlOrClassPath) throws IOException {
+    return new DataInputStream(getInputStreamFromURLOrClasspathOrFileSystem(filenameUrlOrClassPath));
+  }
+
+  public static DataOutputStream getDataOutputStream(String filename) throws IOException {
+    return new DataOutputStream(getBufferedOutputStream((filename)));
   }
 
   /**
@@ -422,17 +433,37 @@ public class IOUtils {
     return in;
   }
 
-  public static BufferedReader readReaderFromString(String textFileOrUrl)
-          throws IOException {
-    return new BufferedReader(new InputStreamReader(
-            getInputStreamFromURLOrClasspathOrFileSystem(textFileOrUrl)));
+  /**
+   * Open a BufferedReader on stdin. Use the user's default encoding.
+   */
+  public static BufferedReader readerFromStdin() throws IOException {
+    return new BufferedReader(new InputStreamReader(System.in));
   }
 
   /**
    * Open a BufferedReader to a file or URL specified by a String name. If the
-   * String starts with https?://, then it is interpreted as a URL, otherwise it
-   * is interpreted as a local file. If the String ends in .gz, it is
-   * interpreted as a gzipped file (and uncompressed), else it is interpreted as
+   * String starts with https?://, then it is first tried as a URL, otherwise it
+   * is next tried as a resource on the CLASSPATH, and then finally it is tried
+   * as a local file or other network-available file. If the String ends in .gz, it
+   * is interpreted as a gzipped file (and uncompressed). The file is then
+   * interpreted as a utf-8 text file.
+   *
+   * @param textFileOrUrl What to read from
+   * @return The BufferedReader
+   * @throws IOException If there is an I/O problem
+   */
+  public static BufferedReader readerFromString(String textFileOrUrl)
+          throws IOException {
+    return new BufferedReader(new InputStreamReader(
+            getInputStreamFromURLOrClasspathOrFileSystem(textFileOrUrl), "UTF-8"));
+  }
+
+  /**
+   * Open a BufferedReader to a file or URL specified by a String name. If the
+   * String starts with https?://, then it is first tried as a URL, otherwise it
+   * is next tried as a resource on the CLASSPATH, and then finally it is tried
+   * as a local file or other network-available file . If the String ends in .gz, it
+   * is interpreted as a gzipped file (and uncompressed), else it is interpreted as
    * a regular text file in the given encoding.
    *
    * @param textFileOrUrl What to read from
@@ -441,8 +472,8 @@ public class IOUtils {
    * @return The BufferedReader
    * @throws IOException If there is an I/O problem
    */
-  public static BufferedReader readReaderFromString(String textFileOrUrl,
-                                                    String encoding) throws IOException {
+  public static BufferedReader readerFromString(String textFileOrUrl,
+                                                String encoding) throws IOException {
     InputStream is = getInputStreamFromURLOrClasspathOrFileSystem(textFileOrUrl);
     if (encoding == null) {
       return new BufferedReader(new InputStreamReader(is));
@@ -460,7 +491,22 @@ public class IOUtils {
    * @return An Iterable containing the lines from the file.
    */
   public static Iterable<String> readLines(String path) {
+    if(path.endsWith(".gz")) return readLines(new File(path), GZIPInputStream.class);
     return readLines(new File(path));
+  }
+
+  /**
+   * Returns an Iterable of the lines in the file.
+   *
+   * The file reader will be closed when the iterator is exhausted. IO errors
+   * will throw an (unchecked) RuntimeIOException
+   *
+   * @param path The file whose lines are to be read.
+   * @param encoding The encoding to use when reading lines.
+   * @return An Iterable containing the lines from the file.
+   */
+  public static Iterable<String> readLines(String path, String encoding) {
+    return readLines(new File(path), null, encoding);
   }
 
   /**
@@ -472,7 +518,24 @@ public class IOUtils {
    * @return An Iterable containing the lines from the file.
    */
   public static Iterable<String> readLines(final File file) {
-    return readLines(file, null);
+    return readLines(file, null, null);
+  }
+
+  /**
+   * Returns an Iterable of the lines in the file.
+   *
+   * The file reader will be closed when the iterator is exhausted.
+   *
+   * @param file The file whose lines are to be read.
+   * @param fileInputStreamWrapper
+   *          The class to wrap the InputStream with, e.g. GZIPInputStream. Note
+   *          that the class must have a constructor that accepts an
+   *          InputStream.
+   * @return An Iterable containing the lines from the file.
+   */
+  public static Iterable<String> readLines(final File file,
+                                           final Class<? extends InputStream> fileInputStreamWrapper) {
+    return readLines(file, fileInputStreamWrapper, null);
   }
 
   /**
@@ -485,10 +548,12 @@ public class IOUtils {
    *          The class to wrap the InputStream with, e.g. GZIPInputStream. Note
    *          that the class must have a constructor that accepts an
    *          InputStream.
+   * @param encoding The encoding to use when reading lines.
    * @return An Iterable containing the lines from the file.
    */
   public static Iterable<String> readLines(final File file,
-                                           final Class<? extends InputStream> fileInputStreamWrapper) {
+                                           final Class<? extends InputStream> fileInputStreamWrapper,
+                                           final String encoding) {
 
     return new Iterable<String>() {
       public Iterator<String> iterator() {
@@ -529,12 +594,17 @@ public class IOUtils {
                 stream = fileInputStreamWrapper.getConstructor(
                         InputStream.class).newInstance(stream);
               }
-              return new BufferedReader(new InputStreamReader(stream));
+              if (encoding == null) {
+                return new BufferedReader(new InputStreamReader(stream));
+              } else {
+                return new BufferedReader(new InputStreamReader(stream, encoding));
+              }
             } catch (Exception e) {
               throw new RuntimeIOException(e);
             }
           }
 
+          @Override
           public void remove() {
             throw new UnsupportedOperationException();
           }
@@ -703,7 +773,7 @@ public class IOUtils {
    */
   public static String slurpFile(String filename, String encoding)
           throws IOException {
-    Reader r = new InputStreamReader(new FileInputStream(filename), encoding);
+    Reader r = new InputStreamReader(getInputStreamFromURLOrClasspathOrFileSystem(filename), encoding);
     return IOUtils.slurpReader(r);
   }
 
@@ -936,7 +1006,7 @@ public class IOUtils {
       } else {
         String[] cells = StringUtils.splitOnCharWithQuoting(line,',',quoteChar,escapeChar);
         assert(cells.length == labels.length);
-        Map<String,String> cellMap = new HashMap<String,String>();
+        Map<String,String> cellMap = Generics.newHashMap();
         for (int i=0; i<labels.length; i++) cellMap.put(labels[i],cells[i]);
         rows.add(cellMap);
       }
@@ -1015,6 +1085,7 @@ public class IOUtils {
     //--Return
     return lines;
   }
+
   public static LinkedList<String[]> readCSVStrictly(String filename, int numColumns) throws IOException {
     return readCSVStrictly(slurpFile(filename).toCharArray(), numColumns);
   }
@@ -1098,6 +1169,9 @@ public class IOUtils {
 
   public static PrintWriter getPrintWriter(String filename, String encoding) throws IOException {
     OutputStream out = getFileOutputStream(filename);
+    if (encoding == null) {
+      encoding = defaultEncoding;
+    }
     return new PrintWriter(new BufferedWriter(new OutputStreamWriter(out, encoding)), true);
   }
 
@@ -1131,7 +1205,7 @@ public class IOUtils {
   {
     BufferedReader br = IOUtils.getBufferedFileReader(infile);
     String line;
-    Set<String> set = new HashSet<String>();
+    Set<String> set = Generics.newHashSet();
     while ((line = br.readLine()) != null) {
       line = line.trim();
       if (line.length() > 0) {
@@ -1170,7 +1244,7 @@ public class IOUtils {
 
   public static Map<String,String> readMap(String filename) throws IOException
   {
-    Map<String,String> map = new HashMap<String,String>();
+    Map<String,String> map = Generics.newHashMap();
     try {
       BufferedReader br = IOUtils.getBufferedFileReader(filename);
       String line;
@@ -1178,6 +1252,7 @@ public class IOUtils {
         String[] fields = tab.split(line,2);
         map.put(fields[0], fields[1]);
       }
+      br.close();
     } catch (IOException ex) {
       throw new RuntimeException(ex);
     }
@@ -1306,9 +1381,6 @@ public class IOUtils {
     }
   }
 
-  public static void main(String[] args) {
-    System.out.println(backupName(args[0]));
-  }
 
   public static String getExtension(String fileName) {
     if(!fileName.contains("."))

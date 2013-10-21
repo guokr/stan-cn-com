@@ -9,9 +9,8 @@
 package edu.stanford.nlp.tagger.maxent;
 
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-
-import edu.stanford.nlp.io.OutDataStreamFile;
 
 
 /**
@@ -41,31 +40,12 @@ public class FeatureKey {
   }
 
 
-  protected void set(int num, String val, String tag) {
-    this.num = num;
-    this.val = val;
-    this.tag = tag;
-    this.hashCode = 0;
-  }
-
-  // If you know you're setting just the tag, this goes a bit faster
-  // than doing all of the other fiddly stuff with the hash code later
-  // on.  For some reason, though, passing in cached hashCodes doesn't
-  // help.  Perhaps Strings already cache their own hashCode.
-  protected void setTag(String tag) {
-    if (hashCode != 0) {
-      this.hashCode = this.hashCode ^ this.tag.hashCode() ^ tag.hashCode();
-    }
-    this.tag = tag;
-  }
-
-
   @Override
   public String toString() {
     return Integer.toString(num) + ' ' + val + ' ' + tag;
   }
 
-  protected void save(OutDataStreamFile f) throws IOException {
+  protected void save(DataOutputStream f) throws IOException {
     f.writeInt(num);
     f.writeUTF(val);
     f.writeUTF(tag);

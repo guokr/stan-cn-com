@@ -21,6 +21,10 @@ public class CRFDatum<FEAT,LAB> implements Serializable {
   private final List<FEAT> features;
   @SuppressWarnings({"NonSerializableFieldInSerializableClass"})
   private final LAB label;
+  @SuppressWarnings({"NonSerializableFieldInSerializableClass"})
+  // featureVals holds the (optional) feature value for non-boolean features
+  // such as the ones used in continuous vector space embeddings
+  private final List<double[]> featureVals;
 
   /**
    * Constructs a new BasicDatum with the given features and label.
@@ -28,9 +32,10 @@ public class CRFDatum<FEAT,LAB> implements Serializable {
    * @param features The features of the CRFDatum
    * @param label The label of the CRFDatum
    */
-  public CRFDatum(List<FEAT> features, LAB label) {
+  public CRFDatum(List<FEAT> features, LAB label, List<double[]> featureVals) {
     this.features = features;
     this.label = label;
+    this.featureVals = featureVals;
   }
 
   /**
@@ -41,6 +46,17 @@ public class CRFDatum<FEAT,LAB> implements Serializable {
   public List<FEAT> asFeatures() {
     return features;
   }
+
+  /**
+   * Returns the double array containing the feature values
+   *
+   * @return the double array that contains the feature values matching each feature as 
+   *         returned by <code>asFeatures()</code>
+   */
+  public List<double[]> asFeatureVals() {
+    return featureVals;
+  }
+
 
   /**
    * Returns the label for this Datum, or null if none have been set.
@@ -59,7 +75,9 @@ public class CRFDatum<FEAT,LAB> implements Serializable {
     StringBuilder sb = new StringBuilder("CRFDatum[\n");
     sb.append("    label=").append(label).append('\n');
     for (int i = 0, sz = features.size(); i < sz; i++) {
-      sb.append("    features(").append(i).append("):").append(features.get(i)).append('\n');
+      sb.append("    features(").append(i).append("):").append(features.get(i));
+      sb.append(", val=").append(featureVals.get(i));
+      sb.append('\n');
     }
     sb.append(']');
     return sb.toString();

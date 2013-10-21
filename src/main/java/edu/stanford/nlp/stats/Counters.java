@@ -47,7 +47,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -66,6 +65,7 @@ import edu.stanford.nlp.util.ErasureUtils;
 import edu.stanford.nlp.util.Factory;
 import edu.stanford.nlp.util.FixedPrioritiesPriorityQueue;
 import edu.stanford.nlp.util.Function;
+import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Index;
 import edu.stanford.nlp.util.Pair;
 import edu.stanford.nlp.util.PriorityQueue;
@@ -368,6 +368,29 @@ public class Counters {
 
   /**
    * Sets each value of target to be target[k]+
+   * value*(num-of-times-it-occurs-in-collection) if the key is present in the arg
+   * collection.
+   */
+  public static <E> void addInPlace(Counter<E> target, Collection<E> arg, double value) {
+    for (E key : arg) {
+      target.incrementCount(key, value);
+    }
+  }
+  
+  /**
+   * For all keys (u,v) in target, sets target[u,v] to be target[u,v] + value
+   *
+   * @param <T1>
+   * @param <T2>
+   */
+  public static <T1, T2> void addInPlace(TwoDimensionalCounter<T1, T2> target, double value) {
+    for (T1 outer : target.firstKeySet()){
+        addInPlace(target.getCounter(outer), value);
+      }
+  }
+  
+  /**
+   * Sets each value of target to be target[k]+
    * num-of-times-it-occurs-in-collection if the key is present in the arg
    * collection.
    */
@@ -459,6 +482,20 @@ public class Counters {
   }
 
   /**
+   * Multiplies each value in target by the count of the key in mult, in place. Returns non zero entries
+   *
+   * @param target The counter
+   * @param mult The counter you want to multiply with target
+   */
+  public static <E> Counter<E> multiplyInPlace(Counter<E> target, Counter<E> mult) {
+    for (Entry<E, Double> entry : target.entrySet()) {
+      target.setCount(entry.getKey(), entry.getValue() * mult.getCount(entry.getKey()));
+    }
+    Counters.retainNonZeros(target);
+    return target;
+  }
+  
+  /**
    * Normalizes the target counter in-place, so the sum of the resulting values
    * equals 1.
    *
@@ -466,6 +503,17 @@ public class Counters {
    */
   public static <E> void normalize(Counter<E> target) {
     multiplyInPlace(target, 1.0 / target.totalCount());
+  }
+  
+  /**
+   * Normalizes the target counter in-place, so the sum of the resulting values
+   * equals 1.
+   *
+   * @param <E> Type of elements in TwoDimensionalCounter
+   * @param <F> Type of elements in TwoDimensionalCounter
+   */
+  public static <E, F> void normalize(TwoDimensionalCounter<E, F> target) {
+    Counters.divideInPlace(target, target.totalCount());
   }
 
   public static <E> void logInPlace(Counter<E> target) {
@@ -523,7 +571,7 @@ public class Counters {
   /**
    * Removes all entries from c except for the top <code>num</code>
    */
-  public static <E extends Comparable> void retainTopKeyComparable(Counter<E> c, int num) {
+  public static <E extends Comparable<E>> void retainTopKeyComparable(Counter<E> c, int num) {
     int numToPurge = c.size() - num;
     if (numToPurge <= 0) {
       return;
@@ -556,7 +604,7 @@ public class Counters {
    * removed entries.
    */
   public static <E> Set<E> retainNonZeros(Counter<E> counter) {
-    Set<E> removed = new HashSet<E>();
+    Set<E> removed = Generics.newHashSet();
     for (E key : counter.keySet()) {
       if (counter.getCount(key) == 0.0) {
         removed.add(key);
@@ -580,7 +628,7 @@ public class Counters {
    * @return The set of discarded entries.
    */
   public static <E> Set<E> retainAbove(Counter<E> counter, double countThreshold) {
-    Set<E> removed = new HashSet<E>();
+    Set<E> removed = Generics.newHashSet();
     for (E key : counter.keySet()) {
       if (counter.getCount(key) < countThreshold) {
         removed.add(key);
@@ -604,7 +652,7 @@ public class Counters {
    * @return The set of discarded entries.
    */
   public static <E> Set<E> retainBelow(Counter<E> counter, double countMaxThreshold) {
-    Set<E> removed = new HashSet<E>();
+    Set<E> removed = Generics.newHashSet();
     for (E key : counter.keySet()) {
       if (counter.getCount(key) > countMaxThreshold) {
         removed.add(key);
@@ -626,7 +674,7 @@ public class Counters {
    * @return The set of discarded entries.
    */
   public static Set<String> retainMatchingKeys(Counter<String> counter, List<Pattern> matchPatterns) {
-    Set<String> removed = new HashSet<String>();
+    Set<String> removed = Generics.newHashSet();
     for (String key : counter.keySet()) {
       boolean matched = false;
       for (Pattern pattern : matchPatterns) {
@@ -655,7 +703,7 @@ public class Counters {
    * @return The set of discarded entries.
    */
   public static<E> Set<E> retainKeys(Counter<E> counter, Collection<E> matchKeys) {
-    Set<E> removed = new HashSet<E>();
+    Set<E> removed = Generics.newHashSet();
     for (E key : counter.keySet()) {
       boolean matched = matchKeys.contains(key);
       if (!matched) {
@@ -693,7 +741,7 @@ public class Counters {
    *         threshold.
    */
   public static <E> Set<E> keysAbove(Counter<E> c, double countThreshold) {
-    Set<E> keys = new HashSet<E>();
+    Set<E> keys = Generics.newHashSet();
     for (E key : c.keySet()) {
       if (c.getCount(key) >= countThreshold) {
         keys.add(key);
@@ -707,7 +755,7 @@ public class Counters {
    * This set may have 0 elements but will not be null.
    */
   public static <E> Set<E> keysBelow(Counter<E> c, double countThreshold) {
-    Set<E> keys = new HashSet<E>();
+    Set<E> keys = Generics.newHashSet();
     for (E key : c.keySet()) {
       if (c.getCount(key) <= countThreshold) {
         keys.add(key);
@@ -721,7 +769,7 @@ public class Counters {
    * have 0 elements but will not be null.
    */
   public static <E> Set<E> keysAt(Counter<E> c, double count) {
-    Set<E> keys = new HashSet<E>();
+    Set<E> keys = Generics.newHashSet();
     for (E key : c.keySet()) {
       if (c.getCount(key) == count) {
         keys.add(key);
@@ -867,7 +915,7 @@ public class Counters {
    */
   public static <E> List<E> toSortedList(Counter<E> c, boolean ascending) {
     List<E> l = new ArrayList<E>(c.keySet());
-    Comparator comp = ascending ? toComparator(c) : toComparatorDescending(c);
+    Comparator<E> comp = ascending ? toComparator(c) : toComparatorDescending(c);
     Collections.sort(l, comp);
     return l;
   }
@@ -877,15 +925,16 @@ public class Counters {
    *
    * @return A List of the keys in c, sorted from highest count to lowest.
    */
-  public static <E extends Comparable> List<E> toSortedListKeyComparable(Counter<E> c) {
+  public static <E extends Comparable<E>> List<E> toSortedListKeyComparable(Counter<E> c) {
     List<E> l = new ArrayList<E>(c.keySet());
-    Collections.sort(l, toComparatorWithKeys(c));
+    Comparator<E> comp = toComparatorWithKeys(c);
+    Collections.sort(l, comp);
     Collections.reverse(l);
     return l;
   }
 
   /**
-   * Converts a counter to ranks
+   * Converts a counter to ranks; ranks start from 0
    *
    * @return A counter where the count is the rank in the original counter
    */
@@ -894,6 +943,57 @@ public class Counters {
     List<E> sortedList = toSortedList(c);
     for (int i = 0; i < sortedList.size(); i++) {
       rankCounter.setCount(sortedList.get(i), i);
+    }
+    return rankCounter;
+  }
+  
+  /**
+   * Converts a counter to tied ranks; ranks start from 1
+   *
+   * @return A counter where the count is the rank in the original counter; when values are tied, the rank is the average of the ranks of the tied values
+   */
+  public static <E> Counter<E> toTiedRankCounter(Counter<E> c) {
+    Counter<E> rankCounter = new ClassicCounter<E>();
+    List<Pair<E, Double>> sortedList = toSortedListWithCounts(c);
+    
+    int i = 0;
+    Iterator<Pair<E, Double>> it = sortedList.iterator();
+    while(it.hasNext()) {
+      Pair<E, Double> iEn = it.next();
+      double icount = iEn.second();
+      E iKey = iEn.first();
+      
+      List<Integer> l = new ArrayList<Integer>();
+      List<E> keys = new ArrayList<E>();
+      
+       
+      l.add(i+1);
+      keys.add(iKey);
+      
+      for(int j = i +1; j < sortedList.size(); j++){
+        Pair<E, Double> jEn = sortedList.get(j);
+        if( icount == jEn.second()){
+          l.add(j+1);
+          keys.add(jEn.first());          
+        }else
+          break;
+      }
+      
+      if(l.size() > 1){
+        double sum = 0;
+        for(Integer d: l)
+          sum += d;
+        double avgRank = sum/l.size();
+        for(int k = 0; k < l.size(); k++){
+          rankCounter.setCount(keys.get(k), avgRank);
+          if(k != l.size()-1 && it.hasNext())
+            it.next();
+          i++;
+        }
+      }else{
+        rankCounter.setCount(iKey, i+1);
+        i++;
+      }
     }
     return rankCounter;
   }
@@ -1081,6 +1181,14 @@ public class Counters {
     return result;
   }
 
+  public static <E> Counter<E> add(Counter<E> c1, double value) {
+    Counter<E> result = c1.getFactory().create();
+    for (E key : c1.keySet()) {
+      result.setCount(key, c1.getCount(key) + value);
+    }
+    return result;
+  }
+  
   /**
    * This method does not check entries for NAN or INFINITY values in the
    * doubles returned. It also only iterates over the counter with the smallest
@@ -1264,14 +1372,22 @@ public class Counters {
    * @return Its length
    */
   public static <E, C extends Counter<E>> double L2Norm(C c) {
+    return Math.sqrt(Counters.sumSquares(c));
+  }
+
+  /**
+   * Return the sum of squares (squared L2 norm).
+   * 
+   * @param c
+   * @return the L2 norm of the values in c
+   */
+  public static <E, C extends Counter<E>> double sumSquares(C c) {
     double lenSq = 0.0;
     for (E key : c.keySet()) {
       double count = c.getCount(key);
-      if (count != 0.0) {
-        lenSq += (count * count);
-      }
+      lenSq += (count * count);
     }
-    return Math.sqrt(lenSq);
+    return lenSq;
   }
 
   /**
@@ -1390,7 +1506,7 @@ public class Counters {
    */
   public static <E> Counter<E> average(Counter<E> c1, Counter<E> c2) {
     Counter<E> average = c1.getFactory().create();
-    Set<E> allKeys = new HashSet<E>(c1.keySet());
+    Set<E> allKeys = Generics.newHashSet(c1.keySet());
     allKeys.addAll(c2.keySet());
     for (E key : allKeys) {
       average.setCount(key, (c1.getCount(key) + c2.getCount(key)) * 0.5);
@@ -1499,7 +1615,7 @@ public class Counters {
       }
     }
     // left overs
-    Set<E> rest = new HashSet<E>(b.keySet());
+    Set<E> rest = Generics.newHashSet(b.keySet());
     rest.removeAll(a.keySet());
 
     for (E key : rest) {
@@ -1610,16 +1726,12 @@ public class Counters {
   private static <E> void loadIntoCounter(String filename, Class<E> c, Counter<E> counter) throws RuntimeException {
     try {
       Constructor<E> m = c.getConstructor(String.class);
-      BufferedReader in = IOUtils.getBufferedFileReader(filename);// new
-                                                                  // BufferedReader(new
-                                                                  // FileReader(filename));
-      String line = in.readLine();
-      while (line != null && line.length() > 0) {
-        int endPos = Math.max(line.lastIndexOf(' '), line.lastIndexOf('\t'));
-
-        counter.setCount(m.newInstance(line.substring(0, endPos).trim()), Double.parseDouble(line.substring(endPos, line.length()).trim()));
-
-        line = in.readLine();
+      BufferedReader in = IOUtils.getBufferedFileReader(filename);
+      for (String line; (line = in.readLine()) != null;) {
+        String[] tokens = line.trim().split("\\s+");
+        if (tokens.length != 2) throw new RuntimeException();
+        double value = Double.parseDouble(tokens[1]);
+        counter.setCount(m.newInstance(tokens[0]), value);
       }
       in.close();
     } catch (Exception e) {
@@ -2004,6 +2116,52 @@ public class Counters {
     return counter;
   }
 
+  /**
+   * Convert a counter to an array using a specified key index. Infer the dimension of
+   * the returned vector from the index.
+   */
+  public static <E> double[] asArray(Counter<E> counter, Index<E> index) {
+    return Counters.asArray(counter, index, index.size());
+  }
+  
+  /**
+   * Convert a counter to an array using a specified key index. This method does *not* expand
+   * the index, so all keys in the set keys(counter) - keys(index) are not added to the
+   * output array. Also note that if counter is being used as a sparse array, the result
+   * will be a dense array with zero entries.
+   * 
+   * @return the values corresponding to the index
+   */
+  public static <E> double[] asArray(Counter<E> counter, Index<E> index, int dimension) {
+    if (index.size() == 0) {
+      throw new IllegalArgumentException("Empty index");
+    }
+    Set<E> keys = counter.keySet();
+    double[] array = new double[dimension];
+    for (E key : keys) {
+      int i = index.indexOf(key);
+      if (i >= 0) {
+        array[i] = counter.getCount(key);
+      }
+    }
+    return array;
+  }
+  
+  /**
+   * Convert a counter to an array, the order of the array is random
+   */
+  public static <E> double[] asArray(Counter<E> counter) {
+    Set<E> keys = counter.keySet();
+    double[] array = new double[counter.size()];
+    int i = 0;
+    for (E key : keys) {
+      array[i] = counter.getCount(key);
+      i++;
+    }
+    return array;
+  }
+  
+  
   /**
    * Creates a new TwoDimensionalCounter where all the counts are scaled by d.
    * Internally, uses Counters.scale();
@@ -2435,7 +2593,7 @@ public class Counters {
             // return a HashMap backed by the same numeric type to
             // keep the precision of the returned counter consistent with
             // this one's precision
-            return fromMap(new HashMap<E, N>(), type);
+            return fromMap(Generics.<E, N>newHashMap(), type);
           }
         };
       }
@@ -2687,5 +2845,64 @@ public class Counters {
       counter.setCount(key, value);
       mass += value;
     }
+  }
+
+  public static<A,B> void divideInPlace(TwoDimensionalCounter<A, B> counter, double divisor) {
+    for(Entry<A, ClassicCounter<B>> c: counter.entrySet()){
+      Counters.divideInPlace(c.getValue(), divisor);
+    }
+    counter.recomputeTotal();
+  }
+  
+  public static<E> double pearsonsCorrelationCoefficient(Counter<E> x, Counter<E> y){
+    double stddevX = Counters.standardDeviation(x);
+    double stddevY = Counters.standardDeviation(y);
+    double meanX = Counters.mean(x);
+    double meanY = Counters.mean(y);
+    Counter<E> t1 = Counters.add(x, -meanX);
+    Counter<E> t2 = Counters.add(y, -meanY);
+    Counters.divideInPlace(t1, stddevX);
+    Counters.divideInPlace(t2, stddevY);
+    return Counters.dotProduct(t1, t2)/ (double)(x.size() -1);
+  }
+  
+  public static<E> double spearmanRankCorrelation(Counter<E> x, Counter<E> y){
+    Counter<E> xrank = Counters.toTiedRankCounter(x);
+    Counter<E> yrank = Counters.toTiedRankCounter(y);
+    return Counters.pearsonsCorrelationCoefficient(xrank, yrank);
+  }
+  
+  /**
+   * ensures that counter t has all keys in keys. If the counter does not have the keys, then add the key with count value.
+   * Note that it does not change counts that exist in the counter
+   */
+  public static<E> void ensureKeys(Counter<E> t, Collection<E> keys, double value){
+    for(E k: keys){
+      if(!t.containsKey(k))
+        t.setCount(k, value);
+    }
+  }
+  
+  public static<E> List<E> topKeys(Counter<E> t, int topNum){
+    List<E> list = new ArrayList<E>();
+    PriorityQueue<E> q = Counters.toPriorityQueue(t);
+    int num = 0;
+    while(!q.isEmpty() && num < topNum){
+     num++;
+     list.add(q.removeFirst());
+    }
+    return list;
+  }
+  
+  public static<E> List<Pair<E, Double>> topKeysWithCounts(Counter<E> t, int topNum){
+    List<Pair<E, Double>> list = new ArrayList<Pair<E, Double>>();
+    PriorityQueue<E> q = Counters.toPriorityQueue(t);
+    int num = 0;
+    while(!q.isEmpty() && num < topNum){
+     num++;
+     E k = q.removeFirst();
+     list.add(new Pair<E, Double>(k, t.getCount(k)));
+    }
+    return list;
   }
 }
