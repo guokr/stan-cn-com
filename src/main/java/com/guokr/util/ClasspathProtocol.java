@@ -21,21 +21,20 @@ public enum ClasspathProtocol {
         try {
             URL.setURLStreamHandlerFactory(new Factory("classpath", new Handler()));
         } catch (Throwable e) {
-            //NOOP
+            // NOOP
         }
     }
 
     static class Handler extends URLStreamHandler {
         private final ClassLoader loader;
-        private ProtectionDomain domain = ClasspathProtocol.class.getProtectionDomain();
-        private CodeSource source = domain.getCodeSource();
-        private URL location = source.getLocation();
-        private String path = (location != null ? location.getPath() : null);
+        private ProtectionDomain  domain   = ClasspathProtocol.class.getProtectionDomain();
+        private CodeSource        source   = domain.getCodeSource();
+        private URL               location = source.getLocation();
+        private String            path     = (location != null ? location.getPath() : null);
 
         public Handler() {
-            AbstractClassLoader loader = (path != null
-                ? new JarClassLoader(new String[] { path })
-                : new DowngradeClassLoader(getClass().getClassLoader()));
+            AbstractClassLoader loader = (path != null ? new JarClassLoader(new String[] { path })
+                    : new DowngradeClassLoader(getClass().getClassLoader()));
             this.loader = loader;
         }
 
@@ -50,7 +49,7 @@ public enum ClasspathProtocol {
                 path = path.substring(1);
             }
             final URL resourceUrl = loader.getResource(path);
-            if (resourceUrl!=null) {
+            if (resourceUrl != null) {
                 return resourceUrl.openConnection();
             } else {
                 return null;
@@ -75,5 +74,3 @@ public enum ClasspathProtocol {
         }
     }
 }
-
-
