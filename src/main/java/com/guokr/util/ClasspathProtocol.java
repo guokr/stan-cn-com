@@ -12,8 +12,6 @@ import java.util.Map;
 
 import org.xeustechnologies.jcl.AbstractClassLoader;
 import org.xeustechnologies.jcl.JarClassLoader;
-import org.xeustechnologies.jcl.JclObjectFactory;
-
 import com.guokr.util.DowngradeClassLoader;
 
 public enum ClasspathProtocol {
