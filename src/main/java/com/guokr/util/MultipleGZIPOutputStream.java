@@ -8,7 +8,7 @@ import java.util.zip.GZIPOutputStream;
 public class MultipleGZIPOutputStream extends OutputStream {
 
     private final String     baseFileName;
-    private final long       bufferSize = 26214400;
+    private final long       bufferSize = 13107200;
     private long             bytesRead;
     private int              part;
     private String           currentFileName;

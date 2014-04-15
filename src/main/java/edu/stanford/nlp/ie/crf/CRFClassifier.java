@@ -3527,10 +3527,10 @@ public class CRFClassifier<IN extends CoreMap> extends AbstractSequenceClassifie
     return crf;
   }
 
-  public static CRFClassifier<? extends CoreMap> getClassifier(String loadPath, Properties props) throws IOException, ClassCastException,
+  public static CRFClassifier<? extends CoreMap> getClassifier(String loadURL, Properties props) throws IOException, ClassCastException,
       ClassNotFoundException {
     CRFClassifier<? extends CoreMap> crf = new CRFClassifier<CoreMap>();
-    crf.loadClassifier(loadPath, props);
+    crf.loadClassifier(loadURL, props);
     return crf;
   }
 

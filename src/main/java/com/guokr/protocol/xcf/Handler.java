@@ -31,10 +31,11 @@ public class Handler extends java.net.URLStreamHandler {
 
     @Override
     protected URLConnection openConnection(URL u) throws IOException {
-        if ("file".equals(location.getProtocol())) {
-            return new XcfFileConnection(u, location);
-        } else if ("jar".equals(location.getProtocol())) {
-            return new XcfJarConnection(u, location);
+        URL local = loader.getResource("");
+        if ("file".equals(local.getProtocol())) {
+            return new XcfFileConnection(local, u);
+        } else if ("jar".equals(local.getProtocol())) {
+            return new XcfJarConnection(local, u);
         } else {
             throw new IOException("base protocol[" + location.getProtocol() + "] isn't supported");
         }

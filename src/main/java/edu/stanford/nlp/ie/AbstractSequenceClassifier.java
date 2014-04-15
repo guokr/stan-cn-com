@@ -27,35 +27,72 @@
 
 package edu.stanford.nlp.ie;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileFilter;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.net.URL;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Properties;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
+import java.util.zip.GZIPInputStream;
+
 import edu.stanford.nlp.fsm.DFSA;
 import edu.stanford.nlp.io.IOUtils;
 import edu.stanford.nlp.io.RegExFileFilter;
 import edu.stanford.nlp.io.RuntimeIOException;
 import edu.stanford.nlp.ling.CoreAnnotation;
+import edu.stanford.nlp.ling.CoreAnnotations;
 import edu.stanford.nlp.ling.CoreLabel;
 import edu.stanford.nlp.ling.HasWord;
-import edu.stanford.nlp.ling.CoreAnnotations;
 import edu.stanford.nlp.objectbank.ObjectBank;
 import edu.stanford.nlp.objectbank.ResettableReaderIteratorFactory;
 import edu.stanford.nlp.process.CoreLabelTokenFactory;
 import edu.stanford.nlp.process.CoreTokenFactory;
-import edu.stanford.nlp.sequences.*;
+import edu.stanford.nlp.sequences.DocumentReaderAndWriter;
 import edu.stanford.nlp.sequences.FeatureFactory;
+import edu.stanford.nlp.sequences.KBestSequenceFinder;
+import edu.stanford.nlp.sequences.LatticeWriter;
+import edu.stanford.nlp.sequences.ObjectBankWrapper;
+import edu.stanford.nlp.sequences.PlainTextDocumentReaderAndWriter;
+import edu.stanford.nlp.sequences.SeqClassifierFlags;
+import edu.stanford.nlp.sequences.SequenceModel;
+import edu.stanford.nlp.sequences.SequenceSampler;
+import edu.stanford.nlp.sequences.ViterbiSearchGraphBuilder;
 import edu.stanford.nlp.stats.ClassicCounter;
 import edu.stanford.nlp.stats.Counter;
 import edu.stanford.nlp.stats.Counters;
 import edu.stanford.nlp.stats.Sampler;
-import edu.stanford.nlp.util.*;
-import edu.stanford.nlp.util.concurrent.*;
-
-import java.io.*;
-import java.text.DecimalFormat;
-import java.text.NumberFormat;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
-import java.util.zip.GZIPInputStream;
+import edu.stanford.nlp.util.CoreMap;
+import edu.stanford.nlp.util.Function;
+import edu.stanford.nlp.util.Generics;
+import edu.stanford.nlp.util.Index;
+import edu.stanford.nlp.util.MetaClass;
+import edu.stanford.nlp.util.ReflectionLoading;
+import edu.stanford.nlp.util.StringUtils;
+import edu.stanford.nlp.util.Timing;
+import edu.stanford.nlp.util.Triple;
+import edu.stanford.nlp.util.concurrent.MulticoreWrapper;
+import edu.stanford.nlp.util.concurrent.ThreadsafeProcessor;
 
 /**
  * This class provides common functionality for (probabilistic) sequence models.
@@ -1633,18 +1670,20 @@ public abstract class AbstractSequenceClassifier<IN extends CoreMap> implements 
    * Loads a classifier from the file specified by loadPath. If loadPath ends in
    * .gz, uses a GZIPInputStream, else uses a regular FileInputStream.
    */
-  public void loadClassifier(String loadPath, Properties props) throws ClassCastException, IOException, ClassNotFoundException {
-    InputStream is;
-    // ms, 10-04-2010: check first is this path exists in our CLASSPATH. This
-    // takes priority over the file system.
-    if ((is = loadStreamFromClasspath(loadPath)) != null) {
-      Timing.startDoing("Loading classifier from " + loadPath);
-      loadClassifier(is, props);
-      is.close();
-      Timing.endDoing();
-    } else {
-      loadClassifier(new File(loadPath), props);
-    }
+  public void loadClassifier(String loadURL, Properties props) throws ClassCastException, IOException, ClassNotFoundException {
+    // modified by Mingli: 2014-04-15
+    //InputStream is;
+    //// ms, 10-04-2010: check first is this path exists in our CLASSPATH. This
+    //// takes priority over the file system.
+    //if ((is = loadStreamFromClasspath(loadPath)) != null) {
+    //  Timing.startDoing("Loading classifier from " + loadPath);
+    //  loadClassifier(is, props);
+    //  is.close();
+    //  Timing.endDoing();
+    //} else {
+    //  loadClassifier(new File(loadPath), props);
+    //}
+    loadClassifier(new GZIPInputStream(new URL(loadURL).openStream()), props);
   }
 
   public void loadClassifierNoExceptions(String loadPath) {
