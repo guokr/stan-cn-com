@@ -7,7 +7,6 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.util.Collections;
 import java.util.List;
-import java.util.zip.GZIPInputStream;
 
 public abstract class XcfConnection extends URLConnection {
 
@@ -33,7 +32,6 @@ public abstract class XcfConnection extends URLConnection {
         if (bottoms == null) {
             connect();
         }
-        System.out.println("!");
         return new SequenceInputStream(Collections.enumeration(bottoms));
     }
 

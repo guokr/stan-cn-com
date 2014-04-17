@@ -22,7 +22,7 @@ public class XcfFileConnection extends XcfConnection {
     @Override
     public List<InputStream> list(URL base, String find, String pattern) throws IOException {
         String basepath = base.getPath();
-        String path = basepath + find;
+        String path = basepath + find.substring(1);
         String abspath = new File(path).getAbsolutePath();
         String parpath = new File(abspath).getParent();
         String name = abspath.substring(parpath.length()).substring(1);
@@ -63,16 +63,6 @@ public class XcfFileConnection extends XcfConnection {
                 }
             }
         }
-
-        System.out.println(base);
-        System.out.println(find);
-        System.out.println(path);
-        System.out.println(abspath);
-        System.out.println(parpath);
-        System.out.println(name);
-        System.out.println(regex);
-        System.out.println(files.length);
-        System.out.println(inputs.size());
 
         return inputs;
     }

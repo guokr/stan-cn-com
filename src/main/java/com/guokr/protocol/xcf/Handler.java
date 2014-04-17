@@ -3,41 +3,34 @@ package com.guokr.protocol.xcf;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLConnection;
-import java.security.CodeSource;
-import java.security.ProtectionDomain;
-
-import org.xeustechnologies.jcl.AbstractClassLoader;
-import org.xeustechnologies.jcl.JarClassLoader;
-
-import com.guokr.util.DowngradeClassLoader;
 
 public class Handler extends java.net.URLStreamHandler {
 
-    final ClassLoader        loader;
-    private ProtectionDomain domain   = Handler.class.getProtectionDomain();
-    private CodeSource       source   = domain.getCodeSource();
-    private URL              location = source.getLocation();
-    private String           path     = (location != null ? location.getPath() : null);
-
-    public Handler() {
-        AbstractClassLoader loader = (path != null ? new JarClassLoader(new String[] { path })
-                : new DowngradeClassLoader(getClass().getClassLoader()));
-        this.loader = loader;
-    }
-
-    public Handler(ClassLoader loader) {
-        this.loader = loader;
-    }
-
     @Override
     protected URLConnection openConnection(URL u) throws IOException {
-        URL local = loader.getResource("");
+        String path = u.getPath().substring(1);
+        String refr = u.getRef();
+
+        StringBuilder test = new StringBuilder(path);
+        if (refr != null && refr.length() > 0) {
+            test.append(".part.");
+            for (int i = 0; i < refr.length() - 1; i++) {
+                test.append("0");
+            }
+            test.append("1");
+        }
+
+        URL local = Thread.currentThread().getContextClassLoader().getResource(test.toString());
+        String base = local.toExternalForm();
+        int end = base.length() - test.length();
+        base = base.substring(0, end);
+
         if ("file".equals(local.getProtocol())) {
-            return new XcfFileConnection(local, u);
+            return new XcfFileConnection(new URL(base), u);
         } else if ("jar".equals(local.getProtocol())) {
-            return new XcfJarConnection(local, u);
+            return new XcfJarConnection(new URL(base), u);
         } else {
-            throw new IOException("base protocol[" + location.getProtocol() + "] isn't supported");
+            throw new IOException("base protocol[" + local.getProtocol() + "] isn't supported");
         }
     }
 }

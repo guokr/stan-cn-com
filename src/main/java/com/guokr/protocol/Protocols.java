@@ -13,6 +13,7 @@ public enum Protocols {
             }
             System.setProperty("java.protocol.handler.pkgs", pkgs);
         } catch (Throwable e) {
+            e.printStackTrace();
         }
     }
 

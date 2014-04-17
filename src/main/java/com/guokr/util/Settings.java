@@ -11,13 +11,13 @@ public class Settings extends Properties {
 
     public static Settings    empty            = new Settings(new Properties(), new Properties());
 
-    public static Settings load(String uri) throws Exception {
+    public static Settings load(String uri) {
         Properties props = new Properties();
         try {
             InputStream ins = new URL(uri).openStream();
             props.load(ins);
         } catch (Exception e) {
-            throw e;
+            e.printStackTrace();
         }
         return new Settings(props, empty);
     }
