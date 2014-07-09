@@ -6,9 +6,9 @@ import edu.stanford.nlp.trees.Tree;
 /**
  * @author Roger Levy (rog@nlp.stanford.edu)
  */
-public class CoindexNodes extends TsurgeonPattern {
+class CoindexNodes extends TsurgeonPattern {
 
-  private static String coindexationIntroductionString = "-";
+  private static final String coindexationIntroductionString = "-";
 
   public CoindexNodes(TsurgeonPattern[] children) {
     super("coindex", children);
@@ -24,4 +24,9 @@ public class CoindexNodes extends TsurgeonPattern {
     return t;
   }
 
+  @Override
+  protected void setRoot(TsurgeonPatternRoot root) {
+    super.setRoot(root);
+    root.setCoindexes();
+  }
 }

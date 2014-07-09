@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import edu.stanford.nlp.classify.LogisticClassifier;
@@ -51,6 +52,7 @@ import edu.stanford.nlp.trees.Tree;
 import edu.stanford.nlp.semgraph.SemanticGraph;
 import edu.stanford.nlp.trees.tregex.TregexMatcher;
 import edu.stanford.nlp.trees.tregex.TregexPattern;
+import edu.stanford.nlp.util.CollectionUtils;
 import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Pair;
 import edu.stanford.nlp.util.StringUtils;
@@ -136,6 +138,16 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
   public Set<Mention> predicateNominatives = null;
   public Set<Mention> relativePronouns = null;
 
+  /** Set of other mentions in the same sentence that below to this list */
+  public Set<Mention> listMembers = null;
+  /** Set of other mentions in the same sentence that I am a member of */
+  public Set<Mention> belongToLists = null;
+
+  // Mention is identified as being this speaker....
+  public SpeakerInfo speakerInfo;
+
+  transient private String spanString = null;
+  transient private String lowercaseNormalizedSpanString = null;
 
   @Override
   public Class<Mention> getType() {
@@ -148,17 +160,62 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
 
   @Override
   public String toString() {
-    //    return headWord.toString();
     return spanToString();
   }
 
   public String spanToString() {
-    StringBuilder os = new StringBuilder();
-    for(int i = 0; i < originalSpan.size(); i ++){
-      if(i > 0) os.append(" ");
-      os.append(originalSpan.get(i).get(CoreAnnotations.TextAnnotation.class));
+//    synchronized(this) {
+      if (spanString == null) {
+        StringBuilder os = new StringBuilder();
+        for(int i = 0; i < originalSpan.size(); i ++){
+          if(i > 0) os.append(" ");
+          os.append(originalSpan.get(i).get(CoreAnnotations.TextAnnotation.class));
+        }
+        spanString = os.toString();
+      }
+//    }
+    return spanString;
+  }
+
+  public String lowercaseNormalizedSpanString() {
+//    synchronized(this) {
+      if (lowercaseNormalizedSpanString == null) {
+        // We always normalize to lowercase!!!
+        lowercaseNormalizedSpanString = spanString.toLowerCase();
+      }
+//    }
+    return lowercaseNormalizedSpanString;
+  }
+
+  // Retrieves part of the span that corresponds to the NER (going out from head)
+  public List<CoreLabel> nerTokens() {
+    if (nerString == null || "O".equals(nerString)) return null;
+
+    int start = headIndex-startIndex;
+    int end = headIndex-startIndex+1;
+    while (start > 0) {
+      CoreLabel prev = originalSpan.get(start-1);
+      if (nerString.equals(prev.ner())) {
+        start--;
+      } else {
+        break;
+      }
     }
-    return os.toString();
+    while (end < originalSpan.size()) {
+      CoreLabel next = originalSpan.get(end);
+      if (nerString.equals(next.ner())) {
+        end++;
+      } else {
+        break;
+      }
+    }
+    return originalSpan.subList(start, end);
+  }
+
+  // Retrieves part of the span that corresponds to the NER (going out from head)
+  public String nerName() {
+    List<CoreLabel> t = nerTokens();
+    return (t != null)? StringUtils.joinWords(t, " "):null;
   }
 
   /** Set attributes of a mention:
@@ -170,8 +227,8 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     setType(dict);
     setNERString();
     List<String> mStr = getMentionString();
-    setNumber(dict, getNumberCount(dict, mStr));
-    setGender(dict, getGenderCount(dict, mStr));
+    setNumber(dict);
+    setGender(dict, getGender(dict, mStr));
     setAnimacy(dict);
     setPerson(dict);
     setDiscourse();
@@ -195,7 +252,7 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
    * Returns the features used by the singleton predictor (logistic
    * classifier) to decide whether the mention belongs to a singleton entity
    */
-  private ArrayList<String> getSingletonFeatures(Dictionaries dict){
+  protected ArrayList<String> getSingletonFeatures(Dictionaries dict){
     ArrayList<String> features = new ArrayList<String>();
     features.add(mentionType.toString());
     features.add(nerString);
@@ -227,25 +284,7 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     return mStr;
   }
 
-  private static int[] getNumberCount(Dictionaries dict, List<String> mStr) {
-    int len = mStr.size();
-    if(len > 1) {
-      for(int i = 0 ; i < len-1 ; i++) {
-        if(dict.genderNumber.containsKey(mStr.subList(i, len))) return dict.genderNumber.get(mStr.subList(i, len));
-      }
-
-      // find converted string with ! (e.g., "dr. martin luther king jr. boulevard" -> "! boulevard")
-      List<String> convertedStr = new ArrayList<String>();
-      convertedStr.add("!");
-      convertedStr.add(mStr.get(len-1));
-      if(dict.genderNumber.containsKey(convertedStr)) return dict.genderNumber.get(convertedStr);
-    }
-    if(dict.genderNumber.containsKey(mStr.subList(len-1, len))) return dict.genderNumber.get(mStr.subList(len-1, len));
-
-    return null;
-  }
-
-  private int[] getGenderCount(Dictionaries dict, List<String> mStr) {
+  private Gender getGender(Dictionaries dict, List<String> mStr) {
     int len = mStr.size();
     char firstLetter = headWord.get(CoreAnnotations.TextAnnotation.class).charAt(0);
     if(len > 1 && Character.isUpperCase(firstLetter) && nerString.startsWith("PER")) {
@@ -260,7 +299,7 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
       }
 
       // find converted string with ! (e.g., "dr. martin luther king jr. boulevard" -> "dr. !")
-      List<String> convertedStr = new ArrayList<String>();
+      List<String> convertedStr = new ArrayList<String>(2);
       convertedStr.add(mStr.get(firstNameIdx));
       convertedStr.add("!");
       if(dict.genderNumber.containsKey(convertedStr)) return dict.genderNumber.get(convertedStr);
@@ -268,7 +307,7 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
       if(dict.genderNumber.containsKey(mStr.subList(firstNameIdx, firstNameIdx+1))) return dict.genderNumber.get(mStr.subList(firstNameIdx, firstNameIdx+1));
     }
 
-    if(dict.genderNumber.containsKey(mStr.subList(len-1, len))) return dict.genderNumber.get(mStr.subList(len-1, len));
+    if(mStr.size() > 0 && dict.genderNumber.containsKey(mStr.subList(len-1, len))) return dict.genderNumber.get(mStr.subList(len-1, len));
     return null;
   }
   private void setDiscourse() {
@@ -343,8 +382,98 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     if(this.isPronominal()) return;
   }
 
+  /** Check list member? True if this mention is inside the other mention and the other mention is a list */
+  public boolean isListMemberOf(Mention m) {
+    if (this.equals(m)) return false;
+    if (m.mentionType == MentionType.LIST && this.mentionType == MentionType.LIST) return false; // Don't handle nested lists
+    if (m.mentionType == MentionType.LIST) {
+      return this.includedIn(m);
+    }
+    return false;
+  }
+
+  public void addListMember(Mention m) {
+    if(listMembers == null) listMembers = Generics.newHashSet();
+    listMembers.add(m);
+  }
+
+  public void addBelongsToList(Mention m) {
+    if(belongToLists == null) belongToLists = Generics.newHashSet();
+    belongToLists.add(m);
+  }
+
+  public boolean isMemberOfSameList(Mention m) {
+    Set<Mention> l1 = belongToLists;
+    Set<Mention> l2 = m.belongToLists;
+    if (l1 != null && l2 != null && CollectionUtils.containsAny(l1, l2)) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  private boolean isListLike() {
+    // See if this mention looks to be a conjunction of things
+    // Check for "or" and "and" and ","
+    int commas = 0;
+//    boolean firstLabelLike = false;
+//    if (originalSpan.size() > 1) {
+//      String w = originalSpan.get(1).word();
+//      firstLabelLike = (w.equals(":") || w.equals("-"));
+//    }
+    String mentionSpanString = spanToString();
+    String subTreeSpanString = StringUtils.joinWords(mentionSubTree.yieldWords(), " ");
+    if (subTreeSpanString.equals(mentionSpanString)) {
+      // subtree represents this mention well....
+      List<Tree> children = mentionSubTree.getChildrenAsList();
+      for (Tree t:children) {
+        String label = t.value();
+        String ner = null;
+        if (t.isLeaf()) { ner = ((CoreLabel) t.getLeaves().get(0).label()).ner(); }
+        if ("CC".equals(label)) {
+          // Check NER type
+          if (ner == null || "O".equals(ner)) {
+            return true;
+          }
+        } else if (label.equals(",")) {
+          if (ner == null || "O".equals(ner)) {
+            commas++;
+          }
+        }
+      }
+    }
+
+    if (commas <= 2) {
+      // look at the string for and/or
+      boolean first = true;
+      for (CoreLabel t:originalSpan) {
+        String tag = t.tag();
+        String ner = t.ner();
+        String w = t.word();
+        if (tag.equals("TO") || tag.equals("IN") || tag.startsWith("VB")) {
+          // prepositions and verbs are too hard for us
+          return false;
+        }
+        if (!first) {
+          if (w.equalsIgnoreCase("and") || w.equalsIgnoreCase("or")) {
+            // Check NER type
+            if (ner == null || "O".equals(ner)) {
+              return true;
+            }
+          }
+        }
+        first = false;
+      }
+    }
+
+    return (commas > 2);
+  }
+
   private void setType(Dictionaries dict) {
-    if (headWord.has(CoreAnnotations.EntityTypeAnnotation.class)){    // ACE gold mention type
+    if (isListLike()) {
+      mentionType = MentionType.LIST;
+      SieveCoreferenceSystem.logger.finer("IS LIST: " + this);
+    } else if (headWord.has(CoreAnnotations.EntityTypeAnnotation.class)){    // ACE gold mention type
       if (headWord.get(CoreAnnotations.EntityTypeAnnotation.class).equals("PRO")) {
         mentionType = MentionType.PRONOMINAL;
       } else if (headWord.get(CoreAnnotations.EntityTypeAnnotation.class).equals("NAM")) {
@@ -368,8 +497,12 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     }
   }
 
-  private void setGender(Dictionaries dict, int[] genderNumberCount) {
+  private void setGender(Dictionaries dict, Gender genderNumberResult) {
     gender = Gender.UNKNOWN;
+    if(genderNumberResult!=null && this.number!=Number.PLURAL){
+      gender = genderNumberResult;
+      SieveCoreferenceSystem.logger.finer("[Gender number count] New gender assigned:\t" + gender + ":\t" +  headString + "\tspan:" + spanToString());
+    }
     if (mentionType == MentionType.PRONOMINAL) {
       if (dict.malePronouns.contains(headString)) {
         gender = Gender.MALE;
@@ -377,39 +510,44 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
         gender = Gender.FEMALE;
       }
     } else {
-      if(Constants.USE_GENDER_LIST){
-        // Bergsma list
-        if(gender == Gender.UNKNOWN)  {
+      // Bergsma or user provided list
+      if(gender == Gender.UNKNOWN)  {
+        if ("PERSON".equals(nerString) || "PER".equals(nerString)) {
+          // Try to get gender of the named entity
+          // Start with first name until we get gender...
+          List<CoreLabel> nerToks = nerTokens();
+          for (CoreLabel t:nerToks) {
+            String name = t.word().toLowerCase();
+            if(dict.maleWords.contains(name)) {
+              gender = Gender.MALE;
+              SieveCoreferenceSystem.logger.finer("[Bergsma List] New gender assigned:\tMale:\t" +  name + "\tspan:" + spanToString());
+              break;
+            }
+            else if(dict.femaleWords.contains(name))  {
+              gender = Gender.FEMALE;
+              SieveCoreferenceSystem.logger.finer("[Bergsma List] New gender assigned:\tFemale:\t" +  name + "\tspan:" + spanToString());
+              break;
+            }
+          }
+        } else {
           if(dict.maleWords.contains(headString)) {
             gender = Gender.MALE;
-            SieveCoreferenceSystem.logger.finest("[Bergsma List] New gender assigned:\tMale:\t" +  headString);
+            SieveCoreferenceSystem.logger.finer("[Bergsma List] New gender assigned:\tMale:\t" +  headString + "\tspan:" + spanToString());
           }
           else if(dict.femaleWords.contains(headString))  {
             gender = Gender.FEMALE;
-            SieveCoreferenceSystem.logger.finest("[Bergsma List] New gender assigned:\tFemale:\t" +  headString);
+            SieveCoreferenceSystem.logger.finer("[Bergsma List] New gender assigned:\tFemale:\t" +  headString + "\tspan:" + spanToString());
           }
           else if(dict.neutralWords.contains(headString))   {
             gender = Gender.NEUTRAL;
-            SieveCoreferenceSystem.logger.finest("[Bergsma List] New gender assigned:\tNeutral:\t" +  headString);
+            SieveCoreferenceSystem.logger.finer("[Bergsma List] New gender assigned:\tNeutral:\t" +  headString + "\tspan:" + spanToString());
           }
         }
-      }
-      if(genderNumberCount!=null && this.number!=Number.PLURAL){
-        double male = genderNumberCount[0];
-        double female = genderNumberCount[1];
-        double neutral = genderNumberCount[2];
-
-        if (male * 0.5 > female + neutral && male > 2) {
-          this.gender = Gender.MALE;
-        } else if (female * 0.5 > male + neutral && female > 2) {
-          this.gender = Gender.FEMALE;
-        } else if (neutral * 0.5 > male + female && neutral > 2)
-          this.gender = Gender.NEUTRAL;
       }
     }
   }
 
-  protected void setNumber(Dictionaries dict, int[] genderNumberCount) {
+  protected void setNumber(Dictionaries dict) {
     if (mentionType == MentionType.PRONOMINAL) {
       if (dict.pluralPronouns.contains(headString)) {
         number = Number.PLURAL;
@@ -418,7 +556,10 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
       } else {
         number = Number.UNKNOWN;
       }
+    } else if (mentionType == MentionType.LIST) {
+      number = Number.PLURAL;
     } else if(! nerString.equals("O") && mentionType!=MentionType.NOMINAL){
+      // Check to see if this is a list of things
       if(! (nerString.equals("ORGANIZATION") || nerString.startsWith("ORG"))){
         number = Number.SINGULAR;
       } else {
@@ -437,16 +578,14 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     }
 
     if(mentionType != MentionType.PRONOMINAL) {
-      if(Constants.USE_NUMBER_LIST){
-        if(number == Number.UNKNOWN){
-          if(dict.singularWords.contains(headString)) {
-            number = Number.SINGULAR;
-            SieveCoreferenceSystem.logger.finest("[Bergsma] Number set to:\tSINGULAR:\t" + headString);
-          }
-          else if(dict.pluralWords.contains(headString))  {
-            number = Number.PLURAL;
-            SieveCoreferenceSystem.logger.finest("[Bergsma] Number set to:\tPLURAL:\t" + headString);
-          }
+      if(number == Number.UNKNOWN){
+        if(dict.singularWords.contains(headString)) {
+          number = Number.SINGULAR;
+          SieveCoreferenceSystem.logger.finest("[Bergsma] Number set to:\tSINGULAR:\t" + headString);
+        }
+        else if(dict.pluralWords.contains(headString))  {
+          number = Number.PLURAL;
+          SieveCoreferenceSystem.logger.finest("[Bergsma] Number set to:\tPLURAL:\t" + headString);
         }
       }
 
@@ -522,6 +661,7 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
   private static final String [] commonNESuffixes = {
     "Corp", "Co", "Inc", "Ltd"
   };
+
   private static boolean knownSuffix(String s) {
     if(s.endsWith(".")) s = s.substring(0, s.length() - 1);
     for(String suff: commonNESuffixes){
@@ -534,20 +674,23 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
 
   private void setHeadString() {
     this.headString = headWord.get(CoreAnnotations.TextAnnotation.class).toLowerCase();
-    if(headWord.has(CoreAnnotations.NamedEntityTagAnnotation.class)) {
+    String ner = headWord.get(CoreAnnotations.NamedEntityTagAnnotation.class);
+    if (ner != null && !ner.equals("O")) {
       // make sure that the head of a NE is not a known suffix, e.g., Corp.
       int start = headIndex - startIndex;
-      if (start >= originalSpan.size()) {
+      if (originalSpan.size() > 0 && start >= originalSpan.size()) {
         throw new RuntimeException("Invalid start index " + start + "=" + headIndex + "-" + startIndex
                 + ": originalSpan=[" + StringUtils.joinWords(originalSpan, " ") + "], head=" + headWord);
       }
-      while(start >= 0){
-        String head = originalSpan.get(start).get(CoreAnnotations.TextAnnotation.class).toLowerCase();
-        if(knownSuffix(head) == false){
-          this.headString = head;
-          break;
-        } else {
+      while (start >= 0) {
+        String head = originalSpan.size() > 0 ? originalSpan.get(start).get(CoreAnnotations.TextAnnotation.class).toLowerCase() : "";
+        if (knownSuffix(head)) {
           start --;
+        } else {
+          this.headString = head;
+          this.headWord = originalSpan.get(start);
+          this.headIndex = startIndex + start;
+          break;
         }
       }
     }
@@ -555,7 +698,8 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
 
   private void setNERString() {
     if(headWord.has(CoreAnnotations.EntityTypeAnnotation.class)){ // ACE
-      if(headWord.has(CoreAnnotations.NamedEntityTagAnnotation.class) && headWord.get(CoreAnnotations.EntityTypeAnnotation.class).equals("NAM")){
+      if(headWord.has(CoreAnnotations.NamedEntityTagAnnotation.class) &&
+              headWord.get(CoreAnnotations.EntityTypeAnnotation.class).equals("NAM")){
         this.nerString = headWord.get(CoreAnnotations.NamedEntityTagAnnotation.class);
       } else {
         this.nerString = "O";
@@ -758,8 +902,17 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
       } else {
         if (this.endIndex > m.endIndex) {
           return true;
-        } else {
+        } else if (this.endIndex < m.endIndex) {
           return false;
+        } else if (this.headIndex != m.headIndex) {
+          // Meaningless, but an arbitrary tiebreaker
+          return this.headIndex < m.headIndex;
+        } else if (this.mentionType != m.mentionType) {
+          // Meaningless, but an arbitrary tiebreaker
+          return this.mentionType.representativeness > m.mentionType.representativeness;
+        } else {
+          // Meaningless, but an arbitrary tiebreaker
+          return this.hashCode() < m.hashCode();
         }
       }
     }
@@ -933,25 +1086,42 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
 
   public boolean moreRepresentativeThan(Mention m){
     if(m==null) return true;
-    if(mentionType!=m.mentionType) {
-      if ((mentionType == MentionType.PROPER && m.mentionType != MentionType.PROPER)
-           || (mentionType == MentionType.NOMINAL && m.mentionType == MentionType.PRONOMINAL)) {
-        return true;
-      } else {
-        return false;
+    if (mentionType.representativeness > m.mentionType.representativeness) { return true; }
+    else if (m.mentionType.representativeness > mentionType.representativeness) { return false; }
+    else {
+      // pick mention with better NER
+      if (nerString != null && m.nerString == null) return true;
+      if (nerString == null && m.nerString != null) return false;
+      if (nerString != null && !nerString.equals(m.nerString)) {
+        if ("O".equals(m.nerString)) return true;
+        if ("O".equals(nerString)) return false;
+        if ("MISC".equals(m.nerString)) return true;
+        if ("MISC".equals(nerString)) return false;
       }
-    } else {
-      if (headIndex - startIndex > m.headIndex - m.startIndex) {
-        return true;
-      } else if (sentNum < m.sentNum || (sentNum == m.sentNum && headIndex < m.headIndex)) {
-        return true;
-      } else {
-        return false;
+      // Ensure that both NER tags are neither MISC nor O, or are both not existent
+      assert nerString == null || nerString.equals(m.nerString) || (!nerString.equals("O") && !nerString.equals("MISC") && !m.nerString.equals("O") && !m.nerString.equals("MISC"));
+      // Return larger headIndex - startIndex
+      if (headIndex - startIndex > m.headIndex - m.startIndex) { return true; }
+      else if (headIndex - startIndex < m.headIndex - m.startIndex) { return false; }
+      // Return earlier sentence number
+      else if (sentNum < m.sentNum) { return true; }
+      else if (sentNum > m.sentNum) { return false; }
+      // Return earlier head index
+      else if (headIndex < m.headIndex) { return true; }
+      else if (headIndex > m.headIndex) { return false; }
+      // If the mentions are short, take the longer one
+      else if (originalSpan.size() <= 5 && originalSpan.size() > m.originalSpan.size()) { return true; }
+      else if (originalSpan.size() <= 5 && originalSpan.size() < m.originalSpan.size()) { return false; }
+      // If the mentions are long, take the shorter one (we're getting into the realm of nonsense by here)
+      else if (originalSpan.size() < m.originalSpan.size()) { return true; }
+      else if (originalSpan.size() > m.originalSpan.size()) { return false; }
+      else {
+        throw new IllegalStateException("Comparing a mention with itself for representativeness");
       }
     }
   }
 
-  //Returns filtered premodifiers (no determiners or numerals)
+  // Returns filtered premodifiers (no determiners or numerals)
   public ArrayList<ArrayList<IndexedWord>> getPremodifiers(){
 
     ArrayList<ArrayList<IndexedWord>> premod = new ArrayList<ArrayList<IndexedWord>>();
@@ -1130,7 +1300,8 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
 
   public boolean isRoleAppositive(Mention m, Dictionaries dict) {
     String thisString = this.spanToString();
-    if(this.isPronominal() || dict.allPronouns.contains(thisString.toLowerCase())) return false;
+    String thisStringLower = this.lowercaseNormalizedSpanString();
+    if(this.isPronominal() || dict.allPronouns.contains(thisStringLower)) return false;
     if(!m.nerString.startsWith("PER") && !m.nerString.equals("O")) return false;
     if(!this.nerString.startsWith("PER") && !this.nerString.equals("O")) return false;
     if(!sameSentence(m) || !m.spanToString().startsWith(thisString)) return false;
@@ -1140,30 +1311,38 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
          || !this.numbersAgree(m)) {
       return false;
     }
-    if (dict.demonymSet.contains(thisString.toLowerCase())
-         || dict.demonymSet.contains(m.spanToString().toLowerCase())) {
+    if (dict.demonymSet.contains(thisStringLower)
+         || dict.demonymSet.contains(m.lowercaseNormalizedSpanString())) {
       return false;
     }
     return true;
   }
 
-  public boolean isDemonym(Mention m, Dictionaries dict){
-    String thisString = this.spanToString().toLowerCase();
-    String antString = m.spanToString().toLowerCase();
-    if(thisString.startsWith("the ") || thisString.startsWith("The ")) {
-      thisString = thisString.substring(4);
-    }
-    if(antString.startsWith("the ") || antString.startsWith("The ")) antString = antString.substring(4);
+  public boolean isDemonym(Mention m, Dictionaries dict) {
+    String thisCasedString = this.spanToString();
+    String antCasedString = m.spanToString();
 
-    if (dict.statesAbbreviation.containsKey(m.spanToString()) && dict.statesAbbreviation.get(m.spanToString()).equals(this.spanToString())
-         || dict.statesAbbreviation.containsKey(this.spanToString()) && dict.statesAbbreviation.get(this.spanToString()).equals(m.spanToString())) {
+    // The US state matching part (only) is done cased
+    String thisNormed = dict.lookupCanonicalAmericanStateName(thisCasedString);
+    String antNormed = dict.lookupCanonicalAmericanStateName(antCasedString);
+    if (thisNormed != null && thisNormed.equals(antNormed)) {
       return true;
     }
 
-    if(dict.demonyms.get(thisString)!=null){
-      if(dict.demonyms.get(thisString).contains(antString)) return true;
-    } else if(dict.demonyms.get(antString)!=null){
-      if(dict.demonyms.get(antString).contains(thisString)) return true;
+    // The rest is done uncased
+    String thisString = thisCasedString.toLowerCase(Locale.ENGLISH);
+    String antString = antCasedString.toLowerCase(Locale.ENGLISH);
+    if (thisString.startsWith("the ")) {
+      thisString = thisString.substring(4);
+    }
+    if (antString.startsWith("the ")) {
+      antString = antString.substring(4);
+    }
+
+    Set<String> thisDemonyms = dict.getDemonyms(thisString);
+    Set<String> antDemonyms = dict.getDemonyms(antString);
+    if (thisDemonyms.contains(antString) || antDemonyms.contains(thisString)) {
+      return true;
     }
     return false;
   }
@@ -1204,7 +1383,7 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     if(relation == EnglishGrammaticalRelations.NOMINAL_PASSIVE_SUBJECT || relation == EnglishGrammaticalRelations.CLAUSAL_PASSIVE_SUBJECT) return "subject";
 
     // verbal argument relations
-    if(relation == EnglishGrammaticalRelations.ADJECTIVAL_COMPLEMENT || relation == EnglishGrammaticalRelations.ATTRIBUTIVE || relation == EnglishGrammaticalRelations.CLAUSAL_COMPLEMENT || relation == EnglishGrammaticalRelations.XCLAUSAL_COMPLEMENT || relation == EnglishGrammaticalRelations.AGENT || relation == EnglishGrammaticalRelations.DIRECT_OBJECT || relation == EnglishGrammaticalRelations.INDIRECT_OBJECT) return "verbArg";
+    if(relation == EnglishGrammaticalRelations.ADJECTIVAL_COMPLEMENT || relation == EnglishGrammaticalRelations.CLAUSAL_COMPLEMENT || relation == EnglishGrammaticalRelations.XCLAUSAL_COMPLEMENT || relation == EnglishGrammaticalRelations.AGENT || relation == EnglishGrammaticalRelations.DIRECT_OBJECT || relation == EnglishGrammaticalRelations.INDIRECT_OBJECT) return "verbArg";
 
     // noun argument relations
     if(relation == EnglishGrammaticalRelations.RELATIVE_CLAUSE_MODIFIER || relation == EnglishGrammaticalRelations.NOUN_COMPOUND_MODIFIER || relation == EnglishGrammaticalRelations.ADJECTIVAL_MODIFIER || relation == EnglishGrammaticalRelations.APPOSITIONAL_MODIFIER || relation == EnglishGrammaticalRelations.POSSESSION_MODIFIER) return "nounArg";
@@ -1221,9 +1400,8 @@ public class Mention implements CoreAnnotation<Mention>, Serializable {
     for(Pair<GrammaticalRelation, IndexedWord> childPair : childPairs) {
       GrammaticalRelation gr = childPair.first;
       IndexedWord word = childPair.second;
-      if(gr == EnglishGrammaticalRelations.ADJECTIVAL_MODIFIER || gr == EnglishGrammaticalRelations.PARTICIPIAL_MODIFIER
-          || gr == EnglishGrammaticalRelations.RELATIVE_CLAUSE_MODIFIER || gr == EnglishGrammaticalRelations.INFINITIVAL_MODIFIER
-          || gr.toString().startsWith("prep_")) {
+      if(gr == EnglishGrammaticalRelations.ADJECTIVAL_MODIFIER || gr == EnglishGrammaticalRelations.VERBAL_MODIFIER ||
+         gr == EnglishGrammaticalRelations.RELATIVE_CLAUSE_MODIFIER || gr.toString().startsWith("prep_")) {
         count++;
       }
       // add noun modifier when the mention isn't a NER

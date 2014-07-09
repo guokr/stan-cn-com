@@ -153,6 +153,7 @@ public class ChineseGrammaticalStructure extends GrammaticalStructure {
       while ((t = tr.readTree()) != null) {
         tb.add(t);
       }
+      tr.close();
     } catch (IOException e) {
       throw new RuntimeException("File problem: " + e);
     }
@@ -179,12 +180,20 @@ public class ChineseGrammaticalStructure extends GrammaticalStructure {
 
     Treebank tb = new MemoryTreebank();
     Properties props = StringUtils.argsToProperties(args);
+
+    String encoding = props.getProperty("encoding", "utf-8");
+    try {
+      System.setOut(new PrintStream(System.out, true, encoding));
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+
     String treeFileName = props.getProperty("treeFile");
     String treeDirname = props.getProperty("treeDir");
     String sentFileName = props.getProperty("sentFile");
-    String encoding = props.getProperty("encoding", "utf-8");
     boolean conllx = props.getProperty("conllx") != null;
     boolean basic = props.getProperty("basic") != null;
+    boolean nonCollapsed = props.getProperty("nonCollapsed") != null;
     boolean collapsed = props.getProperty("collapsed") != null;
     boolean parseTree = props.getProperty("parseTree") != null;
     boolean keepPunct = props.getProperty("keepPunct") != null;
@@ -297,14 +306,21 @@ public class ChineseGrammaticalStructure extends GrammaticalStructure {
       //System.out.println(gs);
 
       if (basic) {
-        if (collapsed) {
+        if (collapsed || nonCollapsed) {
           System.out.println("------------- basic dependencies ---------------");
+        }
+        printDependencies(gs, gs.typedDependencies(false), t, conllx, false);
+      }
+
+      if (nonCollapsed) {
+        if (basic || collapsed) {
+          System.out.println("------------- noncollapsed dependencies ---------------");
         }
         printDependencies(gs, gs.typedDependencies(true), t, conllx, false);
       }
 
       if (collapsed) {
-        if (basic) {
+        if (basic || nonCollapsed) {
           System.out.println("----------- collapsed dependencies -----------");
         }
         printDependencies(gs, gs.typedDependenciesCollapsed(true), t, conllx, false);

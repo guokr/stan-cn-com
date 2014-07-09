@@ -9,7 +9,8 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
-* Trigger for CoreMap Node Patterns
+* Trigger for CoreMap Node Patterns.  Allows for fast identification of which patterns
+*  may match for one node.
 *
 * @author Angel Chang
 */
@@ -36,7 +37,7 @@ public class CoreMapNodePatternTrigger implements MultiPatternMatcher.NodePatter
           for (Pair<Class,NodePattern> v:p.getAnnotationPatterns()) {
             if (v.first == CoreAnnotations.TextAnnotation.class && v.second instanceof CoreMapNodePattern.StringAnnotationPattern) {
               return Triple.makeTriple(v.first, ((CoreMapNodePattern.StringAnnotationPattern) v.second).target,
-                      ((CoreMapNodePattern.StringAnnotationPattern) v.second).ignoreCase);
+                      ((CoreMapNodePattern.StringAnnotationPattern) v.second).ignoreCase());
             }
           }
         }
@@ -49,7 +50,6 @@ public class CoreMapNodePatternTrigger implements MultiPatternMatcher.NodePatter
       Triple<Class,String,Boolean> firstTextTrigger = pattern.findNodePattern(textTriggerFilter);
       if (firstTextTrigger != null) {
         if (firstTextTrigger.third) {
-          // Ignore case
           lowercaseStringTriggers.add(firstTextTrigger.first, firstTextTrigger.second.toLowerCase(), pattern);
         } else {
           annotationTriggers.add(firstTextTrigger.first, firstTextTrigger.second, pattern);
@@ -82,6 +82,7 @@ public class CoreMapNodePatternTrigger implements MultiPatternMatcher.NodePatter
         }
       }
     }
+    // TODO: triggers for normalized patterns...
     return triggeredPatterns;
   }
 }

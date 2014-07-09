@@ -19,7 +19,7 @@ import edu.stanford.nlp.math.SloppyMath;
 import edu.stanford.nlp.sequences.BestSequenceFinder;
 import edu.stanford.nlp.sequences.ExactBestSequenceFinder;
 import edu.stanford.nlp.sequences.SequenceModel;
-import edu.stanford.nlp.tagger.common.TaggerConstants;
+import edu.stanford.nlp.tagger.common.Tagger;
 import edu.stanford.nlp.util.ArrayUtils;
 import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Pair;
@@ -42,7 +42,7 @@ public class TestSentence implements SequenceModel {
 
   protected final boolean VERBOSE;
   protected static final String naTag = "NA";
-  protected static final String[] naTagArr = { naTag };
+  private static final String[] naTagArr = { naTag };
   protected static final boolean DBG = false;
   protected static final int kBestSize = 1;
 
@@ -114,7 +114,7 @@ public class TestSentence implements SequenceModel {
         sent.add(s.get(j).word());
       }
     }
-    sent.add(TaggerConstants.EOS_WORD);
+    sent.add(Tagger.EOS_WORD);
     if (reuseTags) {
       this.originalTags = new ArrayList<String>(sz + 1);
       for (int j = 0; j < sz; ++j) {
@@ -124,7 +124,7 @@ public class TestSentence implements SequenceModel {
           originalTags.add(null);
         }
       }
-      originalTags.add(TaggerConstants.EOS_TAG);
+      originalTags.add(Tagger.EOS_TAG);
     }
     size = sz + 1;
     if (VERBOSE) {
@@ -172,7 +172,7 @@ public class TestSentence implements SequenceModel {
 
   ArrayList<TaggedWord> getTaggedSentence() {
     final boolean hasOffset;
-    hasOffset = origWords != null && (origWords.get(0) instanceof HasOffset);
+    hasOffset = origWords != null && origWords.size() > 0 && (origWords.get(0) instanceof HasOffset);
     ArrayList<TaggedWord> taggedSentence = new ArrayList<TaggedWord>();
     for (int j = 0; j < size - 1; j++) {
       String tag = finalTags[j];
@@ -396,9 +396,20 @@ public class TestSentence implements SequenceModel {
     Extractors ex = maxentTagger.extractors, exR = maxentTagger.extractorsRare;
     String w = pairs.getWord(h.current);
     double[] lS, lcS;
-    if((lS = localScores.get(w)) == null) {
+    lS = localScores.get(w);
+    if (lS == null) {
       lS = getHistories(tags, h, ex.local, rare ? exR.local : null);
       localScores.put(w,lS);
+    } else if (lS.length != tags.length) {
+      // This case can occur when a word was given a specific forced
+      // tag, and then later it shows up without the forced tag.
+      // TODO: if a word is given a forced tag, we should always get
+      // its features rather than use the cache, just in case the tag
+      // given is not the same tag as before
+      lS = getHistories(tags, h, ex.local, rare ? exR.local : null);
+      if (tags.length > 1) {
+        localScores.put(w,lS);
+      }
     }
     if((lcS = localContextScores[h.current]) == null) {
       lcS = getHistories(tags, h, ex.localContext, rare ? exR.localContext : null);
@@ -418,7 +429,7 @@ public class TestSentence implements SequenceModel {
 
   private double[] getExactHistories(History h, List<Pair<Integer,Extractor>> extractors, List<Pair<Integer,Extractor>> extractorsRare) {
     double[] scores = new double[maxentTagger.ySize];
-    int szCommon = maxentTagger.extractors.getSize();
+    int szCommon = maxentTagger.extractors.size();
 
     for (Pair<Integer,Extractor> e : extractors) {
       int kf = e.first();
@@ -457,7 +468,7 @@ public class TestSentence implements SequenceModel {
   private double[] getApproximateHistories(String[] tags, History h, List<Pair<Integer,Extractor>> extractors, List<Pair<Integer,Extractor>> extractorsRare) {
 
     double[] scores = new double[tags.length];
-    int szCommon = maxentTagger.extractors.getSize();
+    int szCommon = maxentTagger.extractors.size();
 
     for (Pair<Integer,Extractor> e : extractors) {
       int kf = e.first();
@@ -507,7 +518,7 @@ public class TestSentence implements SequenceModel {
    */
   void printUnknown(int numSent, PrintFile pfu) {
     NumberFormat nf = new DecimalFormat("0.0000");
-    int numTags = maxentTagger.tags.getSize();
+    int numTags = maxentTagger.numTags();
     double[][][] probabilities = new double[size][kBestSize][numTags];
     calculateProbs(probabilities);
     for (int current = 0; current < size; current++) {
@@ -557,7 +568,7 @@ public class TestSentence implements SequenceModel {
   // to the file pfu except for
   void printTop(PrintFile pfu) {
     NumberFormat nf = new DecimalFormat("0.0000");
-    int numTags = maxentTagger.tags.getSize();
+    int numTags = maxentTagger.numTags();
     double[][][] probabilities = new double[size][kBestSize][numTags];
     calculateProbs(probabilities);
     for (int current = 0; current < size; current++) {

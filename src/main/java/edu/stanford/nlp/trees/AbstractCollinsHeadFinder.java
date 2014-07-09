@@ -54,9 +54,9 @@ import java.util.Map;
  * @author Christopher Manning
  * @author Galen Andrew
  */
-public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Serializable */ {
+public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Serializable */, CopulaHeadFinder {
 
-  private static final boolean DEBUG = false;
+  private static final boolean DEBUG = System.getProperty("HeadFinder", null) != null;
   protected final TreebankLanguagePack tlp;
   protected Map<String, String[][]> nonTerminalInfo;
 
@@ -101,6 +101,14 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
       defaultLeftRule[0] = "left";
       defaultRightRule[0] = "right";
     }
+  }
+
+  /**
+   * Generally will be false, except for SemanticHeadFinder
+   */
+  @Override
+  public boolean makesCopulaHead() {
+    return false;
   }
 
   /**
@@ -189,6 +197,9 @@ public abstract class AbstractCollinsHeadFinder implements HeadFinder /* Seriali
   protected Tree determineNonTrivialHead(Tree t, Tree parent) {
     Tree theHead = null;
     String motherCat = tlp.basicCategory(t.label().value());
+    if (motherCat.startsWith("@")) {
+      motherCat = motherCat.substring(1);
+    }
     if (DEBUG) {
       System.err.println("Looking for head of " + t.label() +
                          "; value is |" + t.label().value() + "|, " +

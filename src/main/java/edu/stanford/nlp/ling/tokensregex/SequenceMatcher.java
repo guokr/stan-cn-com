@@ -35,9 +35,14 @@ import static edu.stanford.nlp.ling.tokensregex.SequenceMatcher.FindType.FIND_NO
  * Functions for retrieving matched patterns
  * <pre><code>
  *    int groupCount()
- *    List<T> groupNodes(), List<T> groupNodes(int g)
+ *    List&lt;T&gt; groupNodes(), List&lt;T&gt; groupNodes(int g)
  *    String group(), String group(int g)
  *    int start(), int start(int g), int end(), int end(int g)
+ * </code></pre>
+ * Functions for replacing
+ * <pre><code>
+ *    List&lt;T&gt; replaceFirst(List&lt;T&gt; seq), List replaceAll(List&lt;T&gt; seq)
+ *    List&lt;T&gt; replaceFirstExtended(List&lt;MatchReplacement&lt;T&gt;&gt; seq), List&lt;T&gt; replaceAllExtended(List&lt;MatchReplacement&lt;T&gt;&gt; seq)
  * </code></pre>
  * Functions for defining the region of the sequence to search over
  *  (default region is entire sequence)
@@ -371,6 +376,10 @@ public class SequenceMatcher<T> extends BasicSequenceMatchResult<T> {
     return matched;
   }
 
+  /**
+   * Applies the matcher and returns all non overlapping matches
+   * @return a Iterable of match results
+   */
   public Iterable<SequenceMatchResult<T>> findAllNonOverlapping() {
     Iterator<SequenceMatchResult<T>> iter = new Iterator<SequenceMatchResult<T>>() {
       SequenceMatchResult<T> next;
@@ -574,6 +583,12 @@ public class SequenceMatcher<T> extends BasicSequenceMatchResult<T> {
     return regionStart;
   }
 
+  /**
+   * Returns a copy of the current match results.  Use this method
+   * to save away match results for later use, since future operations
+   * using the SequenceMatcher changes the match results.
+   * @return Copy of the the current match results
+   */
   public BasicSequenceMatchResult<T> toBasicSequenceMatchResult() {
     if (matchingCompleted && matched) {
       return super.toBasicSequenceMatchResult();
@@ -601,7 +616,7 @@ public class SequenceMatcher<T> extends BasicSequenceMatchResult<T> {
     }
   }
 
-  public List<? extends T> groupNodes(int group) {
+  public List<T> groupNodes(int group) {
     if (matchingCompleted && matched) {
       return super.groupNodes(group);
     } else {

@@ -38,7 +38,7 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
   public static enum DocType {Plain, XML}
 
   public static final String[] DEFAULT_SENTENCE_DELIMS = {".", "?", "!"};
-  
+
   // inputReader is used in a fairly yucky way at the moment to communicate
   // from a XMLIterator across to a PlainTextIterator.  Maybe redo by making
   // the inner classes static and explicitly passing things around.
@@ -65,6 +65,8 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
 
   //From PTB conventions
   private final String[] sentenceFinalFollowers = {")", "]", "\"", "\'", "''", "-RRB-", "-RSB-", "-RCB-"};
+  
+  private boolean keepEmptySentences = false;
 
 
   /**
@@ -112,6 +114,15 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
       System.err.printf("%s: Could not open path %s\n", this.getClass().getName(), docPath);
       throw new RuntimeIOException(ioe);
     }
+  }
+
+  /**
+   * Set whether or not the tokenizer keeps empty sentences in
+   * whitespace mode.  Useful for programs that want to echo blank
+   * lines.  Not relevant for the non-whitespace model.
+   */
+  public void setKeepEmptySentences(boolean keepEmptySentences) {
+    this.keepEmptySentences = keepEmptySentences;
   }
 
   /**
@@ -256,8 +267,14 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
       nextSentCarryover.clear();
       boolean seenBoundary = false;
 
-      while (tokenizer.hasNext()) {
+      if (!tokenizer.hasNext()) {
+        IOUtils.closeIgnoringExceptions(inputReader);
+        inputReader = null;
+        nextSent = null;
+        return;
+      }
 
+      do {
         HasWord token = tokenizer.next();
         if (splitTag != null) {
           String[] toks = splitTag.apply(token.word());
@@ -295,15 +312,15 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
         // was a whitespace token such as \n.  We might as well keep
         // going as if we had never seen anything.
         if (seenBoundary && delimFollowers.size() == 0) {
-          if (nextSent.size() > 0) {
+          if (nextSent.size() > 0 || keepEmptySentences) {
             break;
           } else {
             seenBoundary = false;
           }
         }
-      }
+      } while (tokenizer.hasNext());
 
-      if (nextSent.size() == 0 && nextSentCarryover.size() == 0) {
+      if (nextSent.size() == 0 && nextSentCarryover.size() == 0 && !keepEmptySentences) {
         IOUtils.closeIgnoringExceptions(inputReader);
         inputReader = null;
         nextSent = null;
@@ -407,7 +424,7 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
   public static void main(String[] args) throws IOException {
     if (args.length < 1) {
       System.err.println("usage: DocumentPreprocessor OPT* filename");
-      System.err.println("    OPT = -xml|-encoding ENC|-tokenizerOptions opts|-tag delim|...");
+      System.err.println("    OPT = -xml TAG|-encoding ENC|-tokenizerOptions opts|-tag delim|...");
       return;
     }
 
@@ -423,7 +440,7 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
 
     int i = 0;
     for ( ; i < args.length; i++) {
-      if (args[i].length() == 0 || ! args[i].startsWith("-")) {
+      if (args[i].isEmpty() || ! args[i].startsWith("-")) {
         break;
       }
       if (args[i].equals("-xml")) {
@@ -451,11 +468,11 @@ public class DocumentPreprocessor implements Iterable<List<HasWord>> {
 
       } else if (args[i].equals("-whitespaceTokenization")) {
         tf = null;
-        List<String> whitespaceDelims = 
+        List<String> whitespaceDelims =
             new ArrayList<String>(Arrays.asList(DocumentPreprocessor.DEFAULT_SENTENCE_DELIMS));
         whitespaceDelims.add(WhitespaceLexer.NEWLINE);
         sentenceDelims = whitespaceDelims.toArray(new String[whitespaceDelims.size()]);
-        
+
       } else if (args[i].equals("-tag")) {
         i++;
         tagDelimiter = args[i];

@@ -61,7 +61,7 @@ import static edu.stanford.nlp.trees.GrammaticalRelation.ROOT;
  */
 public abstract class GrammaticalStructure extends TreeGraph {
 
-  private static final boolean PRINT_DEBUGGING = false;
+  private static final boolean PRINT_DEBUGGING = System.getProperty("GrammaticalStructure", null) != null;
 
   protected final Set<Dependency<Label, Label, Object>> dependencies;
   protected final List<TypedDependency> typedDependencies;
@@ -88,6 +88,9 @@ public abstract class GrammaticalStructure extends TreeGraph {
                               Lock relationsLock, HeadFinder hf, Filter<String> puncFilter) {
     super(t); // makes a Tree with TreeGraphNode nodes
     // add head word and tag to phrase nodes
+    if (hf == null) {
+      throw new AssertionError("Cannot use null HeadFinder");
+    }
     root.percolateHeads(hf);
     if (root.value() == null) {
       root.setValue("ROOT");  // todo: cdm: it doesn't seem like this line should be here
@@ -98,7 +101,7 @@ public abstract class GrammaticalStructure extends TreeGraph {
     NoPunctTypedDependencyFilter puncTypedDepFilter = new NoPunctTypedDependencyFilter(puncFilter);
     dependencies = root.dependencies(puncDepFilter, null);
     for (Dependency<Label, Label, Object> p : dependencies) {
-      //System.out.println("dep found " + p);
+      //System.err.println("dep found " + p);
       TreeGraphNode gov = (TreeGraphNode) p.governor();
       TreeGraphNode dep = (TreeGraphNode) p.dependent();
       dep.addArc(GrammaticalRelation.getAnnotationClass(GOVERNOR), gov);
@@ -108,7 +111,7 @@ public abstract class GrammaticalStructure extends TreeGraph {
       relationsLock.lock();
     }
     try {
-      analyzeNode(root, root, relations);
+      analyzeNode(root, root, relations, hf);
     }
     finally {
       if (relationsLock != null) {
@@ -239,20 +242,20 @@ public abstract class GrammaticalStructure extends TreeGraph {
 
 
   // cdm dec 2009: I changed this to automatically fail on preterminal nodes, since they shouldn't match for GR parent patterns.  Should speed it up.
-  private static void analyzeNode(TreeGraphNode t, TreeGraphNode root, Collection<GrammaticalRelation> relations) {
-    // if (t.numChildren() > 0) {          // don't do leaves
+  private static void analyzeNode(TreeGraphNode t, TreeGraphNode root, Collection<GrammaticalRelation> relations, HeadFinder hf) {
     if (t.isPhrasal()) {    // don't do leaves or preterminals!
       TreeGraphNode tHigh = t.highestNodeWithSameHead();
       for (GrammaticalRelation egr : relations) {
         if (egr.isApplicable(t)) {
-          for (Tree u : egr.getRelatedNodes(t, root)) {
+          for (Tree u : egr.getRelatedNodes(t, root, hf)) {
+            //System.err.println("Adding " + egr.getShortName() + " from " + t + " to " + u + " tHigh=" + tHigh);
             tHigh.addArc(GrammaticalRelation.getAnnotationClass(egr), (TreeGraphNode) u);
           }
         }
       }
       // now recurse into children
       for (TreeGraphNode kid : t.children()) {
-        analyzeNode(kid, root, relations);
+        analyzeNode(kid, root, relations, hf);
       }
     }
   }
@@ -271,10 +274,10 @@ public abstract class GrammaticalStructure extends TreeGraph {
     for (Dependency<Label, Label, Object> d : dependencies()) {
       TreeGraphNode gov = (TreeGraphNode) d.governor();
       TreeGraphNode dep = (TreeGraphNode) d.dependent();
-        //System.out.println("Gov: " + gov);
-        //System.out.println("Dep: " + dep);
       GrammaticalRelation reln = getGrammaticalRelation(gov, dep);
-        //System.out.println("Reln: " + reln);
+      // System.err.print("Gov: " + gov);
+      // System.err.print("  Dep: " + dep);
+      // System.err.println("  Reln: " + reln);
       basicDep.add(new TypedDependency(reln, gov, dep));
     }
 
@@ -288,15 +291,18 @@ public abstract class GrammaticalStructure extends TreeGraph {
       // word.  In that case, we still want to add the root->word
       // dependency, but we won't find any roots using the getRoots()
       // method.  Instead we use the HeadFinder and the tree.
-      List<Tree> leaves = Trees.leaves(root());
-      if (leaves.size() > 0) {
-        Tree leaf = leaves.get(0);
-        if (!(leaf instanceof TreeGraphNode)) {
-          throw new AssertionError("Leaves should be TreeGraphNodes");
-        }
-        rootDep = (TreeGraphNode) leaf;
-        if (rootDep.headWordNode() != null) {
-          rootDep = rootDep.headWordNode();
+      rootDep = root().headWordNode();
+      if (rootDep == null) {
+        List<Tree> leaves = Trees.leaves(root());
+        if (leaves.size() > 0) {
+          Tree leaf = leaves.get(0);
+          if (!(leaf instanceof TreeGraphNode)) {
+            throw new AssertionError("Leaves should be TreeGraphNodes");
+          }
+          rootDep = (TreeGraphNode) leaf;
+          if (rootDep.headWordNode() != null) {
+            rootDep = rootDep.headWordNode();
+          }
         }
       }
     } else {
@@ -356,17 +362,19 @@ public abstract class GrammaticalStructure extends TreeGraph {
   }
 
 
-  /** Look through the tree t and adds to the List basicDep dependencies
-   *  which aren't in it but which satisfy the filter puncTypedDepFilter.
+  /** Look through the tree t and adds to the List basicDep
+   *  additional dependencies which aren't
+   *  in the List but which satisfy the filter puncTypedDepFilter.
    *
    * @param t The tree to examine (not changed)
    * @param basicDep The list of dependencies which may be augmented
-   * @param f Additional dependencies are added only if they pass this filter
+   * @param puncTypedDepFilter The filter that may skip punctuation dependencies
+   * @param extraTreeDepFilter Additional dependencies are added only if they pass this filter
    */
   private static void getTreeDeps(TreeGraphNode t, List<TypedDependency> basicDep,
                                   Filter<TypedDependency> puncTypedDepFilter,
                                   Filter<TypedDependency> extraTreeDepFilter) {
-    if (t.isPhrasal()) {          // don't do leaves of POS tags (chris changed this from numChildren > 0 in 2010)
+    if (t.isPhrasal()) {          // don't do leaves or POS tags (chris changed this from numChildren > 0 in 2010)
       Map<Class<? extends GrammaticalRelationAnnotation>, Set<TreeGraphNode>> depMap = getAllDependents(t);
       for (Class<? extends GrammaticalRelationAnnotation> depName : depMap.keySet()) {
         for (TreeGraphNode depNode : depMap.get(depName)) {
@@ -453,46 +461,6 @@ public abstract class GrammaticalStructure extends TreeGraph {
   }
 
   /**
-   * Tries to return a <code>Set</code> of leaf (terminal) nodes
-   * which are the {@link GrammaticalRelation#DEPENDENT
-   * <code>DEPENDENT</code>}s of the given node <code>t</code>.
-   * Probably, <code>t</code> should be a leaf node as well.
-   *
-   * @param t a leaf node in this <code>GrammaticalStructure</code>
-   * @return a <code>Set</code> of nodes which are dependents of
-   *         node <code>t</code>, or else <code>null</code>
-   */
-  public static Set<TreeGraphNode> getDependents(TreeGraphNode t) {
-    Set<TreeGraphNode> deps = Generics.newTreeSet();
-    for (Tree subtree : t) {
-      TreeGraphNode node = (TreeGraphNode) subtree;
-      TreeGraphNode gov = getGovernor(node);
-      if (gov != null && gov == t) {
-        deps.add(node);
-      }
-    }
-    return deps;
-  }
-
-  /**
-   * Tries to return a leaf (terminal) node which is the {@link
-   * GrammaticalRelation#GOVERNOR
-   * <code>GOVERNOR</code>} of the given node <code>t</code>.
-   * Probably, <code>t</code> should be a leaf node as well.
-   *
-   * @param t a leaf node in this <code>GrammaticalStructure</code>
-   * @return a node which is the governor for node
-   *         <code>t</code>, or else <code>null</code>
-   */
-  public static TreeGraphNode getGovernor(TreeGraphNode t) {
-    return getNodeInRelation(t, GOVERNOR);
-  }
-
-  public static TreeGraphNode getNodeInRelation(TreeGraphNode t, GrammaticalRelation r) {
-    return t.followArcToNode(GrammaticalRelation.getAnnotationClass(r));
-  }
-
-  /**
    * Get GrammaticalRelation between gov and dep, and null if gov  is not the
    * governor of dep
    */
@@ -510,18 +478,17 @@ public abstract class GrammaticalStructure extends TreeGraph {
     GrammaticalRelation reln = GrammaticalRelation.DEPENDENT;
     TreeGraphNode govH = gov.highestNodeWithSameHead();
     TreeGraphNode depH = dep.highestNodeWithSameHead();
-    /*System.out.println("gov node " + gov);
-    System.out.println("govH " + govH);
-    System.out.println("dep node " + dep);
-    System.out.println("depH " + depH);*/
+    // System.err.println("  gov node " + gov);
+    // System.err.println("  govH " + govH);
+    // System.err.println("  dep node " + dep);
+    // System.err.println("  depH " + depH);
 
     // Set sortedSet = new TreeSet(new NameComparator());
     // sortedSet.addAll(govH.arcLabelsToNode(depH));
     // Set<Class<? extends GrammaticalRelationAnnotation>> arcLabels = sortedSet;
     Set<Class<? extends GrammaticalRelationAnnotation>> arcLabels = new TreeSet<Class<? extends GrammaticalRelationAnnotation>>(new NameComparator<Class<? extends GrammaticalRelationAnnotation>>());
     arcLabels.addAll(govH.arcLabelsToNode(depH));
-
-    //System.out.println("arcLabels: " + arcLabels);
+    //System.err.println("arcLabels: " + arcLabels);
 
     for (Class<? extends GrammaticalRelationAnnotation> arcLabel : arcLabels) {
       if (arcLabel != null) {
@@ -696,7 +663,9 @@ public abstract class GrammaticalStructure extends TreeGraph {
     // example, the English dependencies, when CC processed, have more
     // nsubjs than they originally do.  If we wait until that occurs
     // to add xsubj for xcomp dependencies, we get better coverage.
+    // TODO: this might not be necessary any more
     if (includeExtras) {
+      getExtras(tdl);
       getTreeDeps(root(), tdl, new NoPunctTypedDependencyFilter(puncFilter), extraTreeDepFilter());
     }
     collapseDependencies(tdl, false, includeExtras);
@@ -726,7 +695,9 @@ public abstract class GrammaticalStructure extends TreeGraph {
     // example, the English dependencies, when CC processed, have more
     // nsubjs than they originally do.  If we wait until that occurs
     // to add xsubj for xcomp dependencies, we get better coverage.
+    // TODO: this might not be necessary any more
     if (includeExtras) {
+      getExtras(tdl);
       getTreeDeps(root(), tdl, new NoPunctTypedDependencyFilter(puncFilter), extraTreeDepFilter());
     }
     collapseDependencies(tdl, true, includeExtras);
@@ -813,7 +784,7 @@ public abstract class GrammaticalStructure extends TreeGraph {
   private static List<String> getDependencyPath(TreeGraphNode node, TreeGraphNode root) {
     List<String> path = new ArrayList<String>();
     while (!node.equals(root)) {
-      TreeGraphNode gov = getGovernor(node);
+      TreeGraphNode gov = node.getGovernor();
       // System.out.println("Governor for \"" + node.value() + "\": \"" + gov.value() + "\"");
       List<GrammaticalRelation> relations = getListGrammaticalRelation(gov, node);
       StringBuilder sb = new StringBuilder();
@@ -936,14 +907,20 @@ public abstract class GrammaticalStructure extends TreeGraph {
 
     if (conllx) {
       List<Tree> leaves = tree.getLeaves();
-      List<String> words = new ArrayList<String>(leaves.size());
-      List<String> pos = new ArrayList<String>(leaves.size());
+      String[] words = new String[leaves.size()];
+      String[] pos = new String[leaves.size()];
       String[] relns = new String[leaves.size()];
       int[] govs = new int[leaves.size()];
 
+      int index = 0;
       for (Tree leaf : leaves) {
-        words.add(leaf.value());
-        pos.add(leaf.parent(tree).value()); // use slow, but safe, parent look up
+        index++;
+        if (!indexToPos.containsKey(index)) {
+          continue;
+        }
+        int depPos = indexToPos.get(index) - 1;
+        words[depPos] = leaf.value();
+        pos[depPos] = leaf.parent(tree).value(); // use slow, but safe, parent look up
       }
 
       for (TypedDependency dep : deps) {
@@ -953,7 +930,10 @@ public abstract class GrammaticalStructure extends TreeGraph {
       }
 
       for (int i = 0; i < relns.length; i++) {
-        String out = String.format("%d\t%s\t_\t%s\t%s\t_\t%d\t%s\t_\t_\n", i + 1, words.get(i), pos.get(i), pos.get(i), govs[i], (relns[i] != null ? relns[i] : "erased"));
+        if (words[i] == null) {
+          continue;
+        }
+        String out = String.format("%d\t%s\t_\t%s\t%s\t_\t%d\t%s\t_\t_\n", i + 1, words[i], pos[i], pos[i], govs[i], (relns[i] != null ? relns[i] : "erased"));
         bf.append(out);
       }
 
@@ -1096,7 +1076,7 @@ public abstract class GrammaticalStructure extends TreeGraph {
         continue;
       int parentId = Integer.parseInt(parentIdStr) - 1;
       String grelString = tokenFields.get(i).get(CoNLLX_RelnField);
-      if (grelString.equals("null"))
+      if (grelString.equals("null") || grelString.equals("erased"))
         continue;
       GrammaticalRelation grel = shortNameToGRel.get(grelString.toLowerCase());
       TypedDependency tdep;
@@ -1562,6 +1542,7 @@ public abstract class GrammaticalStructure extends TreeGraph {
     boolean test = props.getProperty("test") != null;
     boolean keepPunct = props.getProperty("keepPunct") != null;
     boolean conllx = props.getProperty("conllx") != null;
+    // todo: Support checkConnected on more options (including basic)
     boolean checkConnected = props.getProperty("checkConnected") != null;
     boolean portray = props.getProperty("portray") != null;
 
@@ -1738,7 +1719,7 @@ public abstract class GrammaticalStructure extends TreeGraph {
     } // end for
   } // end main
 
-
+  // todo [cdm 2013]: Take this out and make it a trees class: TreeIterableByParsing
   static class LazyLoadTreesByParsing implements Iterable<Tree> {
     final Reader reader;
     final String filename;

@@ -2,9 +2,11 @@ package edu.stanford.nlp.time;
 
 import edu.stanford.nlp.ling.CoreAnnotations;
 import edu.stanford.nlp.ling.tokensregex.*;
+import edu.stanford.nlp.ling.tokensregex.types.Expression;
 import edu.stanford.nlp.ling.tokensregex.types.Expressions;
 import edu.stanford.nlp.ling.tokensregex.SequenceMatchRules;
 import edu.stanford.nlp.ling.tokensregex.types.Value;
+import edu.stanford.nlp.util.CollectionValuedMap;
 import edu.stanford.nlp.util.CoreMap;
 import edu.stanford.nlp.util.Function;
 import edu.stanford.nlp.util.Generics;
@@ -72,6 +74,26 @@ public class TimeFormatter {
     }
   }
 
+  static class ApplyActionWrapper<I,O> implements Function<I,O> {
+    Env env;
+    Function<I,O> base;
+    Expression action;
+
+    ApplyActionWrapper(Env env, Function<I,O> base, Expression action) {
+      this.env = env;
+      this.base = base;
+      this.action = action;
+    }
+
+    public O apply(I in) {
+      O v = base.apply(in);
+      if (action != null) {
+        action.evaluate(env, v);
+      }
+      return v;
+    }
+  }
+
   static class TimePatternExtractRuleCreator extends SequenceMatchRules.AnnotationExtractRuleCreator {
     protected void updateExtractRule(SequenceMatchRules.AnnotationExtractRule r,
                                      Env env,
@@ -81,10 +103,10 @@ public class TimeFormatter {
       MatchedExpression.SingleAnnotationExtractor valueExtractor = SequenceMatchRules.createAnnotationExtractor(env,r);
       valueExtractor.valueExtractor =
               new SequenceMatchRules.CoreMapFunctionApplier< String, Value>(
-                      r.annotationField,
+                      env, r.annotationField,
                       extractor);
       r.extractRule = new SequenceMatchRules.CoreMapExtractRule< String, MatchedExpression >(
-              r.annotationField,
+              env, r.annotationField,
               new SequenceMatchRules.StringPatternExtractRule<MatchedExpression>(pattern,
                       new SequenceMatchRules.StringMatchedExpressionExtractor( valueExtractor, r.matchedExpressionGroup)));
       r.filterRule = new SequenceMatchRules.AnnotationMatchedFilter(valueExtractor);
@@ -97,7 +119,7 @@ public class TimeFormatter {
       MatchedExpression.SingleAnnotationExtractor valueExtractor = SequenceMatchRules.createAnnotationExtractor(env,r);
       valueExtractor.valueExtractor = extractor;
       r.extractRule = new SequenceMatchRules.CoreMapExtractRule<List<? extends CoreMap>, MatchedExpression >(
-              r.annotationField,
+              env, r.annotationField,
               new SequenceMatchRules.BasicSequenceExtractRule(valueExtractor));
       r.filterRule = new SequenceMatchRules.AnnotationMatchedFilter(valueExtractor);
     }
@@ -107,27 +129,29 @@ public class TimeFormatter {
       if (r.ruleType == null) { r.ruleType = "time"; }
       String expr = (String) Expressions.asObject(env, attributes.get("pattern"));
       String formatter = (String) Expressions.asObject(env, attributes.get("formatter"));
+      Expression action = Expressions.asExpression(env, attributes.get("action"));
+      String localeString = (String) Expressions.asObject(env, attributes.get("locale"));
       if (formatter == null) {
         if (r.annotationField == null) { r.annotationField = EnvLookup.getDefaultTextAnnotationKey(env);  }
         /* Parse pattern and figure out what the result should be.... */
-        CustomDateFormatExtractor formatExtractor = new CustomDateFormatExtractor(expr);        
+        CustomDateFormatExtractor formatExtractor = new CustomDateFormatExtractor(expr, localeString);
         //SequenceMatchRules.Expression result = (SequenceMatchRules.Expression) attributes.get("result");
-        updateExtractRule(r, env, formatExtractor.getTextPattern(), formatExtractor);
+        updateExtractRule(r, env, formatExtractor.getTextPattern(), new ApplyActionWrapper(env, formatExtractor, action));
       } else if ("org.joda.time.format.DateTimeFormat".equals(formatter)) {
         if (r.annotationField == null) { r.annotationField = r.tokensAnnotationField;  }
-        updateExtractRule(r, env, new JodaDateTimeFormatExtractor(expr));
+        updateExtractRule(r, env, new ApplyActionWrapper(env, new JodaDateTimeFormatExtractor(expr), action));
       } else if ("org.joda.time.format.ISODateTimeFormat".equals(formatter)) {
         if (r.annotationField == null) { r.annotationField = r.tokensAnnotationField;  }
         try {
           Method m = ISODateTimeFormat.class.getMethod(expr);
           DateTimeFormatter dtf = (DateTimeFormatter) m.invoke(null);
-          updateExtractRule(r, env, new JodaDateTimeFormatExtractor(expr));
+          updateExtractRule(r, env, new ApplyActionWrapper(env, new JodaDateTimeFormatExtractor(expr), action));
         } catch (Exception ex) {
           throw new RuntimeException("Error creating DateTimeFormatter", ex);
         }
       } else if ("java.text.SimpleDateFormat".equals(formatter)) {
         if (r.annotationField == null) { r.annotationField = r.tokensAnnotationField;  }
-        updateExtractRule(r, env, new JavaDateFormatExtractor(expr));
+        updateExtractRule(r, env, new ApplyActionWrapper(env, new JavaDateFormatExtractor(expr), action));
       } else {
         throw new IllegalArgumentException("Unsupported formatter: " + formatter);
       }
@@ -147,6 +171,7 @@ public class TimeFormatter {
    # m       minute of hour               number        30                           m
    # s       second of minute             number        55                           s
    # S       fraction of second           number        978                          S (Millisecond)
+   # a       half day of day marker       am/pm
    */
   /**
    * 1. Convert time string pattern to text pattern
@@ -157,9 +182,11 @@ public class TimeFormatter {
     String timePattern;
     Pattern textPattern;
 
-    public CustomDateFormatExtractor(String timePattern) {
+    public CustomDateFormatExtractor(String timePattern, String localeString) {
+      Locale locale = (localeString != null)? new Locale(localeString): Locale.getDefault();
       this.timePattern = timePattern;
       builder = new FormatterBuilder();
+      builder.locale = locale;
       parsePatternTo(builder, timePattern);
       textPattern = builder.toTextPattern();
     }
@@ -485,6 +512,7 @@ public class TimeFormatter {
           }
         }
       }
+      if (negative) offset = -offset;
       return offset;
     }
     public SUTime.Temporal updateTemporal(SUTime.Temporal t, String fieldValueStr) {
@@ -494,18 +522,46 @@ public class TimeFormatter {
     }
   }
 
+  private static String makeRegex(List<String> strs) {
+    StringBuilder sb = new StringBuilder();
+    boolean first = true;
+    for (String v:strs) {
+      if (first) {
+        first = false;
+      } else {
+        sb.append("|");
+      }
+      sb.append(Pattern.quote(v));
+    }
+    return sb.toString();
+  }
+
+  // Timezones
+  //  ID - US/Pacific
+  //  Name - Pacific Standard Time (or Pacific Daylight Time)
+  //  ShortName  PST (or PDT depending on input milliseconds)
+  //  NameKey    PST (or PDT depending on input milliseconds)
   private static class TimeZoneIdComponent extends FormatComponent
   {
-    static Map<String, DateTimeZone> valueMapping;
-    static List<String> validValues;
+    static Map<String, DateTimeZone> timeZonesById;
+    static List<String> timeZoneIds;
+    static String timeZoneIdsRegex;
     static {
-      validValues = new ArrayList<String>(DateTimeZone.getAvailableIDs());
-      valueMapping = Generics.newHashMap();
-      for (String str:validValues) {
-        valueMapping.put(str.toLowerCase(), DateTimeZone.forID(str));
+      timeZoneIds = new ArrayList<String>(DateTimeZone.getAvailableIDs());
+      timeZonesById = Generics.newHashMap();
+      for (String str:timeZoneIds) {
+        DateTimeZone dtz = DateTimeZone.forID(str);
+        timeZonesById.put(str.toLowerCase(), dtz);
+//        System.out.println(str);
+//        long time = System.currentTimeMillis();
+//        System.out.println(dtz.getShortName(time));
+//        System.out.println(dtz.getName(time));
+//        System.out.println(dtz.getNameKey(time));
+//        System.out.println();
       }
       // Order by length for regex
-      Collections.sort(validValues, STRING_LENGTH_REV_COMPARATOR);
+      Collections.sort(timeZoneIds, STRING_LENGTH_REV_COMPARATOR);
+      timeZoneIdsRegex = makeRegex(timeZoneIds);
     }
 
     public TimeZoneIdComponent()
@@ -514,20 +570,81 @@ public class TimeFormatter {
 
     public DateTimeZone parseDateTimeZone(String str) {
       str = str.toLowerCase();
-      DateTimeZone v = valueMapping.get(str);
+      DateTimeZone v = timeZonesById.get(str);
       return v;
     }
 
     protected StringBuilder appendRegex0(StringBuilder sb) {
-      boolean first = true;
-      for (String v:validValues) {
-        if (first) {
-          first = false;
-        } else {
-          sb.append("|");
-        }
-        sb.append(Pattern.quote(v));
+      sb.append(timeZoneIdsRegex);
+      return sb;
+    }
+
+    public SUTime.Temporal updateTemporal(SUTime.Temporal t, String fieldValueStr) {
+      if (fieldValueStr != null) {
+        DateTimeZone dtz = parseDateTimeZone(fieldValueStr);
+        return t.setTimeZone(dtz);
       }
+      return t;
+    }
+  }
+
+  private static class TimeZoneComponent extends FormatComponent
+  {
+    Locale locale;
+
+    static Map<Locale, CollectionValuedMap<String, DateTimeZone>> timeZonesByName = Generics.newHashMap();
+    static Map<Locale, List<String>> timeZoneNames = Generics.newHashMap();
+    static Map<Locale, String> timeZoneRegexes = Generics.newHashMap();
+
+    public TimeZoneComponent(Locale locale)
+    {
+      this.locale = locale;
+      synchronized (TimeZoneComponent.class) {
+        String regex = timeZoneRegexes.get(locale);
+        if (regex == null) {
+          updateTimeZoneNames(locale);
+        }
+      }
+    }
+
+    private void updateTimeZoneNames(Locale locale) {
+      long time1 = new SUTime.IsoDate(2013,1,1).getJodaTimeInstant().getMillis();
+      long time2 = new SUTime.IsoDate(2013,6,1).getJodaTimeInstant().getMillis();
+      CollectionValuedMap<String,DateTimeZone> tzMap = new CollectionValuedMap<String, DateTimeZone>();
+      for (DateTimeZone dtz:TimeZoneIdComponent.timeZonesById.values()) {
+        // standard timezones
+        tzMap.add(dtz.getShortName(time1, locale).toLowerCase(), dtz);
+        tzMap.add(dtz.getName(time1, locale).toLowerCase(), dtz);
+        // Add about half a year to get day light savings timezones...
+        tzMap.add(dtz.getShortName(time2, locale).toLowerCase(), dtz);
+        tzMap.add(dtz.getName(time2, locale).toLowerCase(), dtz);
+//      tzMap.add(dtz.getNameKey(time).toLowerCase(), dtz);
+//      tzMap.add(dtz.getID().toLowerCase(), dtz);
+      }
+      // Order by length for regex
+      List<String> tzNames = new ArrayList<String>(tzMap.keySet());
+      Collections.sort(tzNames, STRING_LENGTH_REV_COMPARATOR);
+      String tzRegex = makeRegex(tzNames);
+      synchronized (TimeZoneComponent.class) {
+        timeZoneNames.put(locale,tzNames);
+        timeZonesByName.put(locale,tzMap);
+        timeZoneRegexes.put(locale,tzRegex);
+      }
+    }
+
+    public DateTimeZone parseDateTimeZone(String str) {
+      // TODO: do something about these multiple timezones that match the same name...
+      // pick one based on location
+      str = str.toLowerCase();
+      CollectionValuedMap<String,DateTimeZone> tzMap = timeZonesByName.get(locale);
+      Collection<DateTimeZone> v = tzMap.get(str);
+      if (v == null || v.isEmpty()) return null;
+      else return v.iterator().next();
+    }
+
+    protected StringBuilder appendRegex0(StringBuilder sb) {
+      String regex = timeZoneRegexes.get(locale);
+      sb.append(regex);
       return sb;
     }
 
@@ -743,15 +860,15 @@ public class TimeFormatter {
       builder.appendTimeZoneId(); 
       appendComponent(new TimeZoneIdComponent(), true);
     }
-    protected void appendTimeZoneName() { 
+    protected void appendTimeZoneName() {
       builder.appendTimeZoneName(); 
       // TODO: TimeZoneName
-      // appendComponent(new TimeZoneNameComponent(), true);
+      appendComponent(new TimeZoneComponent(locale), true);
     }
-    protected void appendTimeZoneShortName() { 
-      builder.appendTimeZoneShortName(); /* TODO: */
+    protected void appendTimeZoneShortName() {
+      builder.appendTimeZoneShortName();
       // TODO: TimeZoneName
-      // appendComponent(new TimeZoneNameComponent(), true);
+      appendComponent(new TimeZoneComponent(locale), true);
     }
 
     protected void appendQuantifier(String str) {

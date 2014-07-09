@@ -3,8 +3,10 @@ package edu.stanford.nlp.process;
 
 import static edu.stanford.nlp.trees.international.pennchinese.ChineseUtils.WHITEPLUS;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Reader;
@@ -39,6 +41,8 @@ import edu.stanford.nlp.util.StringUtils;
  */
 public class ChineseDocumentToSentenceProcessor implements Serializable {
 
+  // todo: This class is a mess. We should try to get it out of core
+
   private static final long serialVersionUID = 4054964767812217460L;
 
   private static final Set<Character> fullStopsSet = Generics.newHashSet(Arrays.asList(new Character[]{'\u3002', '\uff01', '\uff1f', '!', '?'}));
@@ -47,13 +51,16 @@ public class ChineseDocumentToSentenceProcessor implements Serializable {
   private static final Set<Character> rightMarkSet = Generics.newHashSet(Arrays.asList(new Character[]{'\u201d', '\u2019', '\u300b', '\u300f', '\u3009', '\u300d', '\uff1e', '\uff07', '\uff09', '\'', '"', ')', ']', '>'}));
 
   // private final String normalizationTableFile;
-  private String encoding = "UTF-8";
+
+  private final String encoding = "UTF-8";
   private final List<Pair<String,String>> normalizationTable;
 
 
   public ChineseDocumentToSentenceProcessor() {
     this(null);
   }
+
+  static final Pattern PAIR_PATTERN = Pattern.compile("([^\\s]+)\\s+([^\\s]+)");
 
   /** @param normalizationTableFile A file listing character pairs for
    *     normalization.  Currently the normalization table must be in UTF-8.
@@ -63,10 +70,23 @@ public class ChineseDocumentToSentenceProcessor implements Serializable {
   public ChineseDocumentToSentenceProcessor(String normalizationTableFile) {
     // this.normalizationTableFile = normalizationTableFile;
     if (normalizationTableFile != null) {
+      // modified by guokr --seagull
+	  File file = new File(normalizationTableFile);
+	  ObjectBank<String> lineIter = null;
+	  if (file.exists()) {
+	    lineIter = ObjectBank.getLineIterator(new File(normalizationTableFile), encoding);
+	  } else {
+		try {
+		  URL url = new URL(normalizationTableFile);
+		  Reader reader = new BufferedReader(new InputStreamReader(url.openStream()));
+	      lineIter = ObjectBank.getLineIterator(reader);
+		} catch (IOException e) {
+		  e.printStackTrace();
+		}
+	  }
       normalizationTable = new ArrayList<Pair<String,String>>();
-      for (String line : ObjectBank.getLineIterator(new File(normalizationTableFile), encoding)) {
-        Pattern pairPattern = Pattern.compile("([^\\s]+)\\s+([^\\s]+)");
-        Matcher pairMatcher = pairPattern.matcher(line);
+      for (String line : lineIter) {
+        Matcher pairMatcher = PAIR_PATTERN.matcher(line);
         if (pairMatcher.find()) {
           normalizationTable.add(new Pair<String,String>(pairMatcher.group(1),pairMatcher.group(2)));
         } else {
@@ -98,12 +118,16 @@ public class ChineseDocumentToSentenceProcessor implements Serializable {
     return out;
   }
 
+  private static final Pattern WHITEPLUS_PATTERN = Pattern.compile(WHITEPLUS);
+  private static final Pattern START_WHITEPLUS_PATTERN = Pattern.compile("^" + WHITEPLUS);
+  private static final Pattern END_WHITEPLUS_PATTERN = Pattern.compile(WHITEPLUS + "$");
+
   private String normalize(String inputString) {
     if (normalizationTable == null) {
       return inputString;
     }
 
-    Pattern replacePattern = Pattern.compile(WHITEPLUS);
+    Pattern replacePattern = WHITEPLUS_PATTERN;
     Matcher replaceMatcher = replacePattern.matcher(inputString);
     inputString = replaceMatcher.replaceAll(" ");
 
@@ -341,15 +365,15 @@ public class ChineseDocumentToSentenceProcessor implements Serializable {
   private static String removeWhitespace(String str, boolean segmented) {
     if (str.length() > 0) {
       //System.out.println("Add: "+sentenceString);
-      Pattern replacePattern = Pattern.compile("^" + WHITEPLUS);
+      Pattern replacePattern = START_WHITEPLUS_PATTERN;
       Matcher replaceMatcher = replacePattern.matcher(str);
       str = replaceMatcher.replaceAll("");
-      replacePattern = Pattern.compile(WHITEPLUS + "$");
+      replacePattern = END_WHITEPLUS_PATTERN;
       replaceMatcher = replacePattern.matcher(str);
       str = replaceMatcher.replaceAll("");
 
       if ( ! segmented) {
-        replacePattern = Pattern.compile(WHITEPLUS);
+        replacePattern = WHITEPLUS_PATTERN;
         replaceMatcher = replacePattern.matcher(str);
         str = replaceMatcher.replaceAll("");
       }

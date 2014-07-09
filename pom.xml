@@ -44,9 +44,14 @@
   </properties>
   <dependencies>
     <dependency>
-      <groupId>xom</groupId>
+      <groupId>javax.json</groupId>
+      <artifactId>javax.json-api</artifactId>
+      <version>1.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.io7m.xom</groupId>
       <artifactId>xom</artifactId>
-      <version>1.2.5</version>
+      <version>1.2.10</version>
     </dependency>
     <dependency>
       <groupId>joda-time</groupId>
@@ -61,7 +66,7 @@
     <dependency>
       <groupId>com.googlecode.efficient-java-matrix-library</groupId>
       <artifactId>ejml</artifactId>
-      <version>0.19</version>
+      <version>0.23</version>
     </dependency>
     <dependency>
       <groupId>junit</groupId>

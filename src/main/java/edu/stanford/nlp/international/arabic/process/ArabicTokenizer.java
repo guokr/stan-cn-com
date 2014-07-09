@@ -93,10 +93,12 @@ public class ArabicTokenizer<T extends HasWord> extends AbstractTokenizer<T> {
       this.factory = factory;
     }
 
+    @Override
     public Iterator<T> getIterator(Reader r) {
       return getTokenizer(r);
     }
 
+    @Override
     public Tokenizer<T> getTokenizer(Reader r) {
       return new ArabicTokenizer<T>(r, factory, lexerProperties);
     }
@@ -104,6 +106,7 @@ public class ArabicTokenizer<T extends HasWord> extends AbstractTokenizer<T> {
     /**
      * options: A comma-separated list of options
      */
+    @Override
     public void setOptions(String options) {
       String[] optionList = options.split(",");
       for (String option : optionList) {
@@ -111,11 +114,13 @@ public class ArabicTokenizer<T extends HasWord> extends AbstractTokenizer<T> {
       }
     }
 
+    @Override
     public Tokenizer<T> getTokenizer(Reader r, String extraOptions) {
       setOptions(extraOptions);
       return getTokenizer(r);
     }
-  }
+
+  } // end static class ArabicTokenizerFactory
 
   public static TokenizerFactory<CoreLabel> factory() {
     return ArabicTokenizerFactory.newTokenizerFactory();
@@ -153,6 +158,7 @@ public class ArabicTokenizer<T extends HasWord> extends AbstractTokenizer<T> {
    * <li><code>removeProMarker</code> : Remove the ATB null pronoun marker</li>
    * <li><code>removeSegMarker</code> : Remove the ATB clitic segmentation marker</li>
    * <li><code>removeMorphMarker</code> : Remove the ATB morpheme boundary markers</li>
+   * <li><code>removeLengthening</code> : Replace all sequences of three or more identical (non-period) characters with one copy</li>
    * <li><code>atbEscaping</code> : Replace left/right parentheses with ATB escape characters</li>
    * </ul>
    * </p>
@@ -183,8 +189,8 @@ public class ArabicTokenizer<T extends HasWord> extends AbstractTokenizer<T> {
     // Read the file
     int nLines = 0;
     int nTokens = 0;
-    final String encoding = "UTF-8";
     try {
+      final String encoding = "UTF-8";
       Tokenizer<CoreLabel> tokenizer = tf.getTokenizer(new InputStreamReader(System.in, encoding));
       boolean printSpace = false;
       while (tokenizer.hasNext()) {
@@ -205,4 +211,5 @@ public class ArabicTokenizer<T extends HasWord> extends AbstractTokenizer<T> {
     }
     System.err.printf("Done! Tokenized %d lines (%d tokens)%n", nLines, nTokens);
   }
+
 }

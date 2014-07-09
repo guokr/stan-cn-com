@@ -38,6 +38,7 @@ import java.util.regex.Pattern;
 import edu.stanford.nlp.io.IOUtils;
 import edu.stanford.nlp.ling.StringLabelFactory;
 import edu.stanford.nlp.trees.*;
+import edu.stanford.nlp.util.ArrayMap;
 import edu.stanford.nlp.util.Generics;
 import edu.stanford.nlp.util.Pair;
 import edu.stanford.nlp.util.StringUtils;
@@ -104,7 +105,9 @@ import edu.stanford.nlp.util.Timing;
  * <tr><td>A &lt;&#35; B <td>B is the immediate head of phrase A
  * <tr><td>A &gt;&#35; B <td>A is the immediate head of phrase B
  * <tr><td>A == B <td>A and B are the same node
+ * <tr><td>A &lt;= B <td>A and B are the same node or A is the parent of B
  * <tr><td>A : B<td>[this is a pattern-segmenting operator that places no constraints on the relationship between A and B]
+ * <tr><td>A &lt;... { B ; C ; ... }<td>A has exactly B, C, etc as its subtree, with no other children.
  * </table>
  * <p> Label descriptions can be literal strings, which much match labels
  * exactly, or regular expressions in regular expression bars: /regex/.
@@ -395,7 +398,8 @@ public abstract class TregexPattern implements Serializable {
   abstract TregexMatcher matcher(Tree root, Tree tree,
                                  IdentityHashMap<Tree, Tree> nodesToParents,
                                  Map<String, Tree> namesToNodes,
-                                 VariableStrings variableStrings);
+                                 VariableStrings variableStrings,
+                                 HeadFinder headFinder);
 
   /**
    * Get a {@link TregexMatcher} for this pattern on this tree.
@@ -404,7 +408,22 @@ public abstract class TregexPattern implements Serializable {
    * @return a TregexMatcher
    */
   public TregexMatcher matcher(Tree t) {
-    return matcher(t, t, null, Generics.<String, Tree>newHashMap(), new VariableStrings());
+    // In the assumption that there will usually be very few names in
+    // the pattern, we use an ArrayMap instead of a hash map
+    // TODO: it would be even more efficient if we set this to be
+    // exactly the right size
+    return matcher(t, t, null, ArrayMap.<String, Tree>newArrayMap(), new VariableStrings(), null);
+  }
+
+  /**
+   * Get a {@link TregexMatcher} for this pattern on this tree.  Any Relations which use heads of trees should use the provided HeadFinder.
+   *
+   * @param t a tree to match on
+   * @param headFinder a HeadFinder to use when matching
+   * @return a TregexMatcher
+   */
+  public TregexMatcher matcher(Tree t, HeadFinder headFinder) {
+    return matcher(t, t, null, ArrayMap.<String, Tree>newArrayMap(), new VariableStrings(), headFinder);
   }
 
   /**
@@ -448,7 +467,8 @@ public abstract class TregexPattern implements Serializable {
     return patternString;
   }
 
-  public void setPatternString(String patternString) {
+  /** Only used by the TregexPatternCompiler to set the pattern. Pseudo-final. */
+  void setPatternString(String patternString) {
     this.patternString = patternString;
   }
 
@@ -573,6 +593,15 @@ public abstract class TregexPattern implements Serializable {
     String encoding = "UTF-8";
     String macroOption = "-macros";
     String macroFilename = "";
+    String yieldOnly = "-t";
+    String printAllTrees = "-T";
+    String quietMode = "-C";
+    String wholeTreeMode = "-w";
+    String filenameOption = "-f";
+    String oneMatchPerRootNodeMode = "-o";
+    String reportTreeNumbers = "-n";
+    String rootLabelOnly = "-u";
+    String oneLine = "-s";
     Map<String,Integer> flagMap = Generics.newHashMap();
     flagMap.put(extractSubtreesOption,2);
     flagMap.put(extractSubtreesFileOption,2);
@@ -586,6 +615,15 @@ public abstract class TregexPattern implements Serializable {
     flagMap.put(headFinderArgOption,1);
     flagMap.put(trfOption,1);
     flagMap.put(macroOption, 1);
+    flagMap.put(yieldOnly, 0);
+    flagMap.put(quietMode, 0);
+    flagMap.put(wholeTreeMode, 0);
+    flagMap.put(printAllTrees, 0);
+    flagMap.put(filenameOption, 0);
+    flagMap.put(oneMatchPerRootNodeMode, 0);
+    flagMap.put(reportTreeNumbers, 0);
+    flagMap.put(rootLabelOnly, 0);
+    flagMap.put(oneLine, 0);
     Map<String, String[]> argsMap = StringUtils.argsToMap(args, flagMap);
     args = argsMap.get(null);
 
@@ -626,7 +664,7 @@ public abstract class TregexPattern implements Serializable {
       treeReaderFactoryClassName = argsMap.get(trfOption)[0];
       errPW.println("Using tree reader factory " + treeReaderFactoryClassName + "...");
     }
-    if (argsMap.containsKey("-T")) {
+    if (argsMap.containsKey(printAllTrees)) {
       TRegexTreeVisitor.printTree = true;
     }
     if (argsMap.containsKey(inputFileOption)) {
@@ -636,33 +674,33 @@ public abstract class TregexPattern implements Serializable {
       System.arraycopy(args,0,newArgs,1,args.length);
       args = newArgs;
     }
-    if (argsMap.containsKey("-C")) {
+    if (argsMap.containsKey(quietMode)) {
       TRegexTreeVisitor.printMatches = false;
       TRegexTreeVisitor.printNumMatchesToStdOut = true ;
 
     }
-    if (argsMap.containsKey("-v")) {
+    if (argsMap.containsKey(printNonMatchingTreesOption)) {
       TRegexTreeVisitor.printNonMatchingTrees = true;
     }
-    if (argsMap.containsKey("-x")) {
+    if (argsMap.containsKey(subtreeCodeOption)) {
       TRegexTreeVisitor.printSubtreeCode = true;
       TRegexTreeVisitor.printMatches = false;
     }
-    if (argsMap.containsKey("-w")) {
+    if (argsMap.containsKey(wholeTreeMode)) {
       TRegexTreeVisitor.printWholeTree = true;
     }
-    if (argsMap.containsKey("-f")) {
+    if (argsMap.containsKey(filenameOption)) {
       TRegexTreeVisitor.printFilename = true;
     }
-    if(argsMap.containsKey("-o"))
+    if(argsMap.containsKey(oneMatchPerRootNodeMode))
       TRegexTreeVisitor.oneMatchPerRootNode = true;
-    if(argsMap.containsKey("-n"))
+    if(argsMap.containsKey(reportTreeNumbers))
       TRegexTreeVisitor.reportTreeNumbers = true;
-    if (argsMap.containsKey("-u")) {
+    if (argsMap.containsKey(rootLabelOnly)) {
       treePrintFormats.append(TreePrint.rootLabelOnlyFormat).append(',');
-    } else if (argsMap.containsKey("-s")) { // display short form
+    } else if (argsMap.containsKey(oneLine)) { // display short form
       treePrintFormats.append("oneline,");
-    } else if (argsMap.containsKey("-t")) {
+    } else if (argsMap.containsKey(yieldOnly)) {
       treePrintFormats.append("words,");
     } else {
       treePrintFormats.append("penn,");

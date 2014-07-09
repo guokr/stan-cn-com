@@ -43,9 +43,10 @@ import java.util.*;
  * <tr><td>wordshapes</td><td>left, right</td>
  *     <td>Word shape features, eg transform Foo5 into Xxx#
  *         (not exactly like that, but that general idea).
- *         Creates individual features for each word left ... right</td></tr>
+ *         Creates individual features for each word left ... right.
+ *         Fairly English-specific.</td></tr>
  * <tr><td>unicodeshapes</td><td>left, right</td>
- *     <td>Same thing, but works for some unicode characters, too.</td></tr>
+ *     <td>Same thing, but works for unicode characters generally.</td></tr>
  * <tr><td>unicodeshapeconjunction</td><td>left, right</td>
  *     <td>Instead of individual word shape features, combines several
  *         word shapes into one feature.</td></tr>
@@ -73,7 +74,7 @@ import java.util.*;
  * and extractors for specific word shape features, such as containing
  * or not containing a digit.
  * <br>
- * The macro "frenchunknowns" is a macro for five extractors speific
+ * The macro "frenchunknowns" is a macro for five extractors specific
  * to French, which test the end of the word to see if it matches
  * common suffixes for various POS classes and plural words.  Adding
  * this experiment did not improve accuracy over the regular
@@ -128,7 +129,7 @@ public class ExtractorFramesRare {
    * "1" if capitalized and one of following 3 words is Inc., Co.,
    * Corp., or similar words
    */
-  private static final Extractor cCaselessCompany = 
+  private static final Extractor cCaselessCompany =
     new CaselessCompanyNameDetector();
 
   /**
@@ -341,7 +342,7 @@ public class ExtractorFramesRare {
         String path = Extractor.getParenthesizedArg(arg, 1);
         int lWindow = Extractor.getParenthesizedNum(arg, 2);
         int rWindow = Extractor.getParenthesizedNum(arg, 3);
-        extrs.add(new ExtractorDistsim.ExtractorDistsimConjunction(path, lWindow, rWindow));
+        extrs.add(new ExtractorDistsimConjunction(path, lWindow, rWindow));
       } else if (arg.equalsIgnoreCase("lctagfeatures")) {
         extrs.addAll(Arrays.asList(lcTagFeatures(ttags)));
       }
@@ -707,7 +708,7 @@ class CaselessCompanyNameDetector extends RareExtractor {
   @Override public boolean isLocal() { return false; }
   @Override public boolean isDynamic() { return false; }
 
-  private static final long serialVersionUID = 21L;  
+  private static final long serialVersionUID = 21L;
 }
 
 
@@ -1161,6 +1162,7 @@ class ExtractorDash extends RareExtractor {
 
 class ExtractorWordSuff extends RareExtractor {
 
+  // todo [cdm 2013]: position field in this class could be deleted and use super's position. But will break
   private final int num, position;
 
   ExtractorWordSuff(int num, int position) {
@@ -1182,7 +1184,7 @@ class ExtractorWordSuff extends RareExtractor {
 
   @Override
   public String toString() {
-    return getClass().getName() + "(len" + num + ",w" + position + ")";
+    return StringUtils.getShortClassName(this) + "(len" + num + ",w" + position + ")";
   }
 
   @Override public boolean isLocal() { return (position == 0); }
@@ -1193,6 +1195,7 @@ class ExtractorWordSuff extends RareExtractor {
 
 class ExtractorWordPref extends RareExtractor {
 
+  // todo [cdm 2013]: position field in this class could be deleted and use super's position. But will break
   private final int num, position;
 
   ExtractorWordPref(int num, int position) {
@@ -1215,7 +1218,7 @@ class ExtractorWordPref extends RareExtractor {
 
   @Override
   public String toString() {
-    return getClass().getName() + "(len" + num + ",w" + position + ")";
+    return StringUtils.getShortClassName(this) + "(len" + num + ",w" + position + ")";
   }
 
   @Override public boolean isLocal() { return (position == 0); }

@@ -13,7 +13,7 @@ import java.util.Map;
 import edu.stanford.nlp.ling.TaggedWord;
 import edu.stanford.nlp.ling.WordTag;
 import edu.stanford.nlp.stats.IntCounter;
-import edu.stanford.nlp.tagger.common.TaggerConstants;
+import edu.stanford.nlp.tagger.common.Tagger;
 import edu.stanford.nlp.tagger.io.TaggedFileReader;
 import edu.stanford.nlp.tagger.io.TaggedFileRecord;
 import edu.stanford.nlp.util.Generics;
@@ -30,7 +30,7 @@ import edu.stanford.nlp.util.Generics;
  */
 public class ReadDataTagged {
 
-  private ArrayList<DataWordTag> v = new ArrayList<DataWordTag>();
+  private final ArrayList<DataWordTag> v = new ArrayList<DataWordTag>();
   private int numElements = 0;
   private int totalSentences = 0;
   private int totalWords = 0;
@@ -61,7 +61,7 @@ public class ReadDataTagged {
   /** Frees the memory that is stored in this object by dropping the word-tag data.
    */
   void release() {
-    v = null;
+    v.clear();
   }
 
 
@@ -103,8 +103,8 @@ public class ReadDataTagged {
       }
       maxLen = (sentence.size() > maxLen ? sentence.size() : maxLen);
       minLen = (sentence.size() < minLen ? sentence.size() : minLen);
-      words.add(TaggerConstants.EOS_WORD);
-      tags.add(TaggerConstants.EOS_TAG);
+      words.add(Tagger.EOS_WORD);
+      tags.add(Tagger.EOS_TAG);
       numElements = numElements + sentence.size() + 1;
       // iterate over the words in the sentence
       for (int i = 0; i < sentence.size() + 1; i++) {
@@ -115,8 +115,8 @@ public class ReadDataTagged {
         String tag = tags.get(i);
         String word = words.get(i);
         pairs.add(new WordTag(word,tag));
-        int y = maxentTagger.tags.add(tag);
-        DataWordTag dat = new DataWordTag(h, y, maxentTagger.tags);
+        int y = maxentTagger.addTag(tag);
+        DataWordTag dat = new DataWordTag(h, y, tag);
         v.add(dat);
 
         IntCounter<String> tagCounts = wordTagCounts.get(word);
