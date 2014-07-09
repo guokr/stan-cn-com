@@ -30,7 +30,7 @@ Comments, reviews, bug reports and patches are welcomed.
 Current version
 ----------------
 
-Current version is 0.0.4 and based on Stanford CoreNLP 3.2.0 with minor fixes.
+Current version is 0.0.5 and based on Stanford CoreNLP 3.4 with minor fixes.
 
 Preparation for release
 ------------------------
