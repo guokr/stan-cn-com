@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.jar.JarEntry;
@@ -35,15 +36,21 @@ public class XcfJarConnection extends XcfConnection {
 
         final JarFile jar = new JarFile(basepath);
         final Enumeration<JarEntry> entries = jar.entries();
-        List<URL> urls = new ArrayList<URL>();
+        List<String> paths = new ArrayList<String>();
         while (entries.hasMoreElements()) {
             final String name = entries.nextElement().getName();
             if (pat.matcher(name).find()) {
                 String url = String.format("jar:file://%s!/%s", basepath, name);
-                urls.add(new URL(url));
+                paths.add(url);
             }
         }
         jar.close();
+        Collections.sort(paths);
+
+        List<URL> urls = new ArrayList<URL>();
+        for (String path : paths) {
+            urls.add(new URL(path));
+        }
 
         List<InputStream> inputs = new ArrayList<InputStream>();
         if (urls.size() == 1) {
